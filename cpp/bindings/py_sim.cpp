@@ -6,7 +6,6 @@
 #include <pybind11/eigen.h>
 
 #include "fsae/physics/tire/tmeasy.hpp"
-#include "fsae/physics/tire/thermal.hpp"
 #include "fsae/physics/suspension/bouc_wen.hpp"
 #include "fsae/physics/suspension/lugre.hpp"
 #include "fsae/math/rotation.hpp"
@@ -43,17 +42,6 @@ PYBIND11_MODULE(fsae_sim_py, m) {
           "Compute TMeasy tire forces",
           py::arg("params"), py::arg("state"),
           py::arg("Fz"), py::arg("vsx"), py::arg("vsy"), py::arg("vcx"));
-    
-    // === Thermal Model ===
-    py::class_<physics::tire::TireThermalParams<double>>(m, "TireThermalParams")
-        .def(py::init<>())
-        .def_readwrite("T_opt", &physics::tire::TireThermalParams<double>::T_opt)
-        .def_readwrite("T_width", &physics::tire::TireThermalParams<double>::T_width)
-        .def_readwrite("mu_max", &physics::tire::TireThermalParams<double>::mu_max);
-    
-    m.def("compute_mu_temperature_factor", 
-          &physics::tire::compute_mu_temperature_factor<double>,
-          "Compute friction coefficient temperature factor");
     
     // === Bouc-Wen Model ===
     py::class_<physics::suspension::BoucWenParams<double>>(m, "BoucWenParams")

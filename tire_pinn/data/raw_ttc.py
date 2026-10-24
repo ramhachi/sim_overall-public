@@ -263,6 +263,8 @@ def load_raw_tirf_file(
         }
     )
 
+    if "P" in raw_df.columns:
+        extracted["P"] = raw_df["P"].astype(np.float32)  # inflation pressure [kPa]
     extracted["source_file"] = path.name
     extracted["source_path"] = str(path)
     extracted["source_id"] = f"{project_id}:{run_number}"

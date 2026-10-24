@@ -19,9 +19,11 @@ struct TMeasyParams {
     Scalar Lx = 0.15;           // 縦緩和長 [m]
     Scalar Ly = 0.25;           // 横緩和長 [m]
     
-    // 剛性
-    Scalar Cx = 80000.0;        // 縦剛性 [N/m]
-    Scalar Cy = 22000.0;        // 横剛性 [N/m] （実測: 22436 N/rad）
+    // 接地面（カーカス）剛性 [N/m]。定常では xi = Lx·κ, eta = Ly·tanα、かつ
+    // 小スリップで mu_eff = s(2−s) ≈ 2s なので、実効スリップ剛性は
+    //   Cα = 2·Cy·Ly [N/rad],  Cκ = 2·Cx·Lx [N]。
+    Scalar Cx = 80000.0;        // 縦剛性 [N/m] → Cκ = 2·80000·0.15 = 24000 N
+    Scalar Cy = 44900.0;        // 横剛性 [N/m] = Cα/(2·Ly)、実測 Cα = 22436 N/rad, Ly = 0.25 m
     
     // 特異点回避用仮想速度
     Scalar v_N = 0.5;           // [m/s]
@@ -71,9 +73,6 @@ TMeasyOutput<Scalar> compute_tmeasy(
     
     // 荷重クランプ（負荷重対策）
     Fz = max(Fz, Scalar(1.0));
-    
-    // 特異点回避のための実効速度
-    Scalar v_eff = sqrt(vcx * vcx + params.v_N * params.v_N);
     
     // 変形量の時間微分（一次遅れ系）
     Scalar dxi_dt  = vsx - (abs(vcx) / params.Lx) * state.xi;
