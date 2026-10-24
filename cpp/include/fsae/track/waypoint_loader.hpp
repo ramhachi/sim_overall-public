@@ -5,11 +5,17 @@
 /// CSVファイルやベクトルからトラックモデルを構築
 
 #include "track_model.hpp"
-#include <vector>
+#include "../math/spline.hpp"
+#include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <fstream>
+#include <iostream>
+#include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
-#include <cmath>
+#include <vector>
 
 namespace fsae::track {
 
@@ -18,12 +24,22 @@ struct Waypoint {
     double x;       // X座標 [m]
     double y;       // Y座標 [m]
     double width;   // トラック幅 [m]（オプション、デフォルト3.0）
+    double z = 0.0;                  // 路面高さ [m]
+    double bank = 0.0;               // [rad]
+    double grade = std::numeric_limits<double>::quiet_NaN(); // [rad], NaN → z から導出
+    double mu_scale = 1.0;           // [-]
 };
 
 /// ウェイポイント列からトラックを生成
+///
+/// XY を弦長パラメータの 3 次スプラインで補間し、解析的曲率
+/// κ = (x'y'' - y'x'') / (x'^2 + y'^2)^1.5 を kResampleDs 間隔で再サンプリングする。
+/// 移動平均を使わないためヘアピン/スラロームのピーク κ を保持する（Issue #25）。
 class WaypointTrackBuilder {
 public:
-    /// @param waypoints ウェイポイント列
+    static constexpr double kResampleDs = 0.2;  // [m]
+
+    /// @param waypoints ウェイポイント列（閉ループは先頭点を末尾に重複させる）
     /// @param default_width デフォルトトラック幅 [m]
     WaypointTrackBuilder(std::vector<Waypoint> waypoints, double default_width = 3.0)
         : waypoints_(std::move(waypoints))
@@ -31,155 +47,108 @@ public:
     {}
 
     /// トラックモデルを構築
-    /// ウェイポイント間の距離と角度から曲率を推定
     CurvatureBasedTrack build() const {
         if (waypoints_.size() < 2) {
             throw std::runtime_error("At least 2 waypoints required");
         }
+        const auto& first = waypoints_.front();
+        const auto& last = waypoints_.back();
+        const bool closed = std::hypot(first.x - last.x, first.y - last.y) < 0.001;
 
-        bool force_loop = false;
-        if (waypoints_.size() >= 2) {
-            const auto& first = waypoints_.front();
-            const auto& last = waypoints_.back();
-            double dx = first.x - last.x;
-            double dy = first.y - last.y;
-            if (std::sqrt(dx * dx + dy * dy) < 0.001) {
-                force_loop = true;
-            }
+        // 弦長パラメータ
+        const std::size_t n = waypoints_.size();
+        std::vector<double> t(n, 0.0);
+        for (std::size_t i = 1; i < n; ++i) {
+            t[i] = t[i - 1] + std::hypot(waypoints_[i].x - waypoints_[i - 1].x,
+                                         waypoints_[i].y - waypoints_[i - 1].y);
+        }
+        const double total = t.back();
+        if (total <= 1e-9) throw std::runtime_error("Degenerate waypoints");
+
+        // 閉ループは両端に周回分のパッドを付けて自然スプラインの端点効果を消す
+        const std::size_t pad = closed ? std::min<std::size_t>(10, n - 2) : 0;
+        std::vector<double> tk, xk, yk;
+        auto push = [&](double tv, const Waypoint& w) {
+            if (!tk.empty() && tv - tk.back() < 1e-9) return;
+            tk.push_back(tv); xk.push_back(w.x); yk.push_back(w.y);
+        };
+        for (std::size_t j = pad; j > 0; --j) push(t[n - 1 - j] - total, waypoints_[n - 1 - j]);
+        for (std::size_t i = 0; i < n; ++i) push(t[i], waypoints_[i]);
+        for (std::size_t j = 1; j <= pad; ++j) push(total + t[j], waypoints_[j]);
+        math::CubicSpline<double> sx, sy;
+        sx.build(tk, xk);
+        sy.build(tk, yk);
+
+        // grade 未指定なら z の中心差分から導出
+        std::vector<double> grade(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            if (!std::isnan(waypoints_[i].grade)) { grade[i] = waypoints_[i].grade; continue; }
+            const std::size_t a = i > 0 ? i - 1 : 0;
+            const std::size_t b = i + 1 < n ? i + 1 : n - 1;
+            const double run = t[b] - t[a];
+            grade[i] = run > 1e-6 ? std::atan2(waypoints_[b].z - waypoints_[a].z, run) : 0.0;
         }
 
-        std::vector<TrackPoint> track_points;
-        double s = 0.0;
-        
-        // Loop through waypoints to create TrackPoints
-        for (size_t i = 0; i < waypoints_.size(); ++i) {
-            const auto& wp = waypoints_[i];
-            
+        const int m = std::max(1, static_cast<int>(std::ceil(total / kResampleDs)));
+        std::vector<TrackPoint> pts;
+        pts.reserve(static_cast<std::size_t>(m) + 1);
+        double s_acc = 0.0;
+        std::size_t seg = 0;
+        constexpr double h = 1e-3;  // 2階微分の中心差分（区間内で導関数は2次式なので厳密）
+        for (int k = 0; k <= m; ++k) {
+            const double tq = total * k / m;
+            while (seg + 2 < n && t[seg + 1] <= tq) ++seg;
+            const double span = std::max(t[seg + 1] - t[seg], 1e-12);
+            const double a = std::clamp((tq - t[seg]) / span, 0.0, 1.0);
+            auto lerp = [a](double u, double v) { return u + a * (v - u); };
+            const auto& w0 = waypoints_[seg];
+            const auto& w1 = waypoints_[seg + 1];
+
+            const double xd = sx.derivative(tq), yd = sy.derivative(tq);
+            const double xdd = (sx.derivative(tq + h) - sx.derivative(tq - h)) / (2.0 * h);
+            const double ydd = (sy.derivative(tq + h) - sy.derivative(tq - h)) / (2.0 * h);
+            const double sp2 = std::max(xd * xd + yd * yd, 1e-12);
+
             TrackPoint pt;
-            pt.x = wp.x;
-            pt.y = wp.y;
-            pt.width_left = (wp.width > 0 ? wp.width : default_width_) / 2.0;
-            pt.width_right = pt.width_left;
-            
-            // Calculate distance from previous point
-            if (i > 0) {
-                const auto& prev = waypoints_[i-1];
-                double dx = wp.x - prev.x;
-                double dy = wp.y - prev.y;
-                s += std::sqrt(dx * dx + dy * dy);
-            }
-            pt.s = s;
-
-            // Calculate theta and kappa
-            double theta = 0.0;
-            double kappa = 0.0;
-            
-            // Need prev and next points for curvature/theta
-            const Waypoint* p_prev = nullptr;
-            const Waypoint* p_next = nullptr;
-            bool can_compute = false;
-
-            if (i > 0 && i < waypoints_.size() - 1) {
-                p_prev = &waypoints_[i-1];
-                p_next = &waypoints_[i+1];
-                can_compute = true;
-            } else if (force_loop) {
-                if (i == 0) {
-                    p_prev = &waypoints_[waypoints_.size() - 2];
-                    p_next = &waypoints_[i+1];
-                    can_compute = true;
-                } else if (i == waypoints_.size() - 1) {
-                    p_prev = &waypoints_[i-1];
-                    p_next = &waypoints_[1]; // Wrap to second point
-                    can_compute = true;
-                }
-            } else {
-                // Open track endpoints
-                if (i == 0) {
-                    p_next = &waypoints_[i+1];
-                    double dx = p_next->x - wp.x;
-                    double dy = p_next->y - wp.y;
-                    theta = std::atan2(dy, dx);
-                } else if (i == waypoints_.size() - 1) {
-                    p_prev = &waypoints_[i-1];
-                    double dx = wp.x - p_prev->x;
-                    double dy = wp.y - p_prev->y;
-                    theta = std::atan2(dy, dx);
-                }
-            }
-
-            if (can_compute) {
-                double dx_prev = wp.x - p_prev->x;
-                double dy_prev = wp.y - p_prev->y;
-                double dx_next = p_next->x - wp.x;
-                double dy_next = p_next->y - wp.y;
-                
-                double theta_prev = std::atan2(dy_prev, dx_prev);
-                double theta_next = std::atan2(dy_next, dx_next);
-                
-                theta = normalize_angle(theta_prev * 0.5 + theta_next * 0.5); // Average heading
-                // Be careful with angle averaging around pi/-pi
-                double sin_avg = (std::sin(theta_prev) + std::sin(theta_next)) / 2.0;
-                double cos_avg = (std::cos(theta_prev) + std::cos(theta_next)) / 2.0;
-                theta = std::atan2(sin_avg, cos_avg);
-
-                double d_theta = normalize_angle(theta_next - theta_prev);
-                double s_segment = std::sqrt(dx_prev*dx_prev + dy_prev*dy_prev) 
-                                 + std::sqrt(dx_next*dx_next + dy_next*dy_next);
-                
-                if (s_segment > 1e-6) {
-                    kappa = d_theta / (s_segment * 0.5); // Approximate
-                }
-            }
-            
-            pt.theta = theta;
-            pt.kappa = kappa;
-            
-            track_points.push_back(pt);
+            pt.x = sx(tq);
+            pt.y = sy(tq);
+            if (k > 0) s_acc += std::hypot(pt.x - pts.back().x, pt.y - pts.back().y);
+            pt.s = s_acc;
+            pt.theta = std::atan2(yd, xd);
+            pt.kappa = (xd * ydd - yd * xdd) / (sp2 * std::sqrt(sp2));
+            const double w = lerp(w0.width > 0 ? w0.width : default_width_,
+                                  w1.width > 0 ? w1.width : default_width_);
+            pt.width_left = pt.width_right = 0.5 * w;
+            pt.z = lerp(w0.z, w1.z);
+            pt.bank = lerp(w0.bank, w1.bank);
+            pt.grade = lerp(grade[seg], grade[seg + 1]);
+            pt.mu_scale = lerp(w0.mu_scale, w1.mu_scale);
+            pts.push_back(pt);
+        }
+        // θ を連続（アンラップ）に
+        for (std::size_t i = 1; i < pts.size(); ++i) {
+            pts[i].theta = pts[i - 1].theta + normalize_angle(pts[i].theta - pts[i - 1].theta);
+        }
+        if (closed) {
+            pts.back().x = pts.front().x;
+            pts.back().y = pts.front().y;
         }
 
-        // Apply moving average smoothing to curvature to reduce noise
-        if (!track_points.empty()) {
-            std::vector<double> smoothed_kappa(track_points.size());
-            int window_size = 5; 
-            int half_window = window_size / 2;
-
-            for (size_t i = 0; i < track_points.size(); ++i) {
-                double sum = 0.0;
-                int count = 0;
-                
-                for (int j = -half_window; j <= half_window; ++j) {
-                    int idx = static_cast<int>(i) + j;
-                    
-                    if (force_loop) {
-                        // Wrap index for closed loops
-                        if (idx < 0) idx += track_points.size();
-                        if (idx >= static_cast<int>(track_points.size())) idx -= track_points.size();
-                    } else {
-                        // Clamp index for open tracks
-                        if (idx < 0) idx = 0;
-                        if (idx >= static_cast<int>(track_points.size())) idx = track_points.size() - 1;
-                    }
-
-                    sum += track_points[idx].kappa;
-                    count++;
-                }
-                
-                smoothed_kappa[i] = sum / count;
-            }
-
-            // Apply smoothed values
-            for (size_t i = 0; i < track_points.size(); ++i) {
-                track_points[i].kappa = smoothed_kappa[i];
-            }
-        }
-        
-        return CurvatureBasedTrack(track_points, force_loop);
+        CurvatureBasedTrack track(std::move(pts), closed);
+        track.set_closed(closed);
+        return track;
     }
 
     /// CSVファイルからウェイポイントを読み込み
-    /// フォーマット: x,y[,width]
-    static std::vector<Waypoint> load_from_csv(const std::string& filename, double default_width = 3.0) {
+    ///
+    /// ヘッダー行があれば列名で明示マッピング: x, y, width, z, bank, grade, mu_scale
+    /// （z [m] 上向き正, bank/grade [rad]）。未知の列は無視。ヘッダー無しは従来通り x,y[,width]。
+    /// 周回フラグ: `closed` 引数（CLI）優先、無ければ先頭の `# closed=true|false` コメント行、
+    /// どちらも無ければ端点距離 < 5 m のヒューリスティック（警告を出す）。
+    /// 閉ループは先頭点を末尾へ複製して返す。
+    static std::vector<Waypoint> load_from_csv(const std::string& filename,
+                                               double default_width = 3.0,
+                                               std::optional<bool> closed = std::nullopt) {
         std::vector<Waypoint> waypoints;
         std::ifstream file(filename);
 
@@ -187,44 +156,70 @@ public:
             throw std::runtime_error("Failed to open file: " + filename);
         }
 
+        // 既定（ヘッダー無し）: x,y,width
+        int cx = 0, cy = 1, cw = 2, cz = -1, cb = -1, cg = -1, cm = -1;
         std::string line;
-        // ヘッダーをスキップ
-        if (std::getline(file, line) && line.find("x") != std::string::npos) {
-            // ヘッダー行をスキップ
-        } else {
-            // ヘッダーがない場合は最初に戻る
-            file.clear();
-            file.seekg(0);
+        std::streampos data_start = file.tellg();
+        while (std::getline(file, line)) {
+            std::string low;
+            for (unsigned char c : line) {
+                if (!std::isspace(c)) low.push_back(static_cast<char>(std::tolower(c)));
+            }
+            if (low.rfind("#", 0) == 0) {
+                const auto pos = low.find("closed=");
+                if (pos != std::string::npos && !closed) {
+                    const std::string v = low.substr(pos + 7);
+                    closed = (v == "true" || v == "1" || v == "yes");
+                }
+                data_start = file.tellg();
+                continue;
+            }
+            if (low.find('x') != std::string::npos) {
+                cx = cy = cw = -1;
+                std::istringstream hs(low);
+                std::string name;
+                for (int col = 0; std::getline(hs, name, ','); ++col) {
+                    if (name == "x") cx = col;
+                    else if (name == "y") cy = col;
+                    else if (name == "width" || name == "w") cw = col;
+                    else if (name == "z") cz = col;
+                    else if (name == "bank") cb = col;
+                    else if (name == "grade") cg = col;
+                    else if (name == "mu_scale" || name == "mu") cm = col;
+                }
+                if (cx < 0 || cy < 0) throw std::runtime_error("CSV header lacks x,y: " + filename);
+            } else {
+                file.clear();
+                file.seekg(data_start);  // ヘッダー無し: このデータ行から読み直す
+            }
+            break;
         }
 
         while (std::getline(file, line)) {
+            if (!line.empty() && line[0] == '#') continue;
             std::istringstream iss(line);
             Waypoint wp{};
             wp.width = default_width;
-
             std::string token;
-            int col = 0;
-
-            while (std::getline(iss, token, ',')) {
-                try {
-                    double value = std::stod(token);
-                    if (col == 0) wp.x = value;
-                    else if (col == 1) wp.y = value;
-                    else if (col == 2) wp.width = value;
-                    col++;
-                } catch (...) {
-                    // パースエラーは無視
-                }
+            int parsed = 0;
+            for (int col = 0; std::getline(iss, token, ','); ++col) {
+                double value;
+                try { value = std::stod(token); } catch (...) { continue; }
+                if (col == cx) { wp.x = value; ++parsed; }
+                else if (col == cy) { wp.y = value; ++parsed; }
+                else if (col == cw) wp.width = value;
+                else if (col == cz) wp.z = value;
+                else if (col == cb) wp.bank = value;
+                else if (col == cg) wp.grade = value;
+                else if (col == cm) wp.mu_scale = value;
             }
-
-            if (col >= 2) {  // x, yが最低限必要
+            if (parsed >= 2) {
                 waypoints.push_back(wp);
             }
         }
 
         // Filter out closely-spaced waypoints to prevent noisy theta computation
-        // (Some track CSVs have waypoints separated by only millimeters, which
-        //  causes atan2-based heading to jump wildly between adjacent points.)
+        // (Some track CSVs have waypoints separated by only millimeters.)
         constexpr double MIN_WAYPOINT_SPACING = 0.5; // [m]
         if (waypoints.size() > 2) {
             std::vector<Waypoint> filtered;
@@ -232,8 +227,7 @@ public:
             for (size_t i = 1; i < waypoints.size(); ++i) {
                 double dx = waypoints[i].x - filtered.back().x;
                 double dy = waypoints[i].y - filtered.back().y;
-                double dist = std::sqrt(dx * dx + dy * dy);
-                if (dist >= MIN_WAYPOINT_SPACING) {
+                if (std::sqrt(dx * dx + dy * dy) >= MIN_WAYPOINT_SPACING) {
                     filtered.push_back(waypoints[i]);
                 }
             }
@@ -247,15 +241,20 @@ public:
 
         // ループを閉じる処理
         if (waypoints.size() >= 2) {
-            const auto& first = waypoints.front();
+            const Waypoint first = waypoints.front();
             const auto& last = waypoints.back();
-            double dx = first.x - last.x;
-            double dy = first.y - last.y;
-            double dist = std::sqrt(dx * dx + dy * dy);
-
-            // 始点と終点が近く(5m以内)、かつ完全に一致していない場合は閉じる
-            if (dist < 5.0 && dist > 0.001) {
+            const double dist = std::hypot(first.x - last.x, first.y - last.y);
+            if (!closed) {
+                closed = dist < 5.0;
+                std::cerr << "Warning: track '" << filename << "' has no explicit closed flag "
+                          << "(CSV '# closed=true|false' or --track-closed/--track-open); "
+                          << "endpoint-gap heuristic " << dist << " m → "
+                          << (*closed ? "closed" : "open") << std::endl;
+            }
+            if (*closed && dist > 0.001) {
                 waypoints.push_back(first);
+            } else if (!*closed && dist < 0.001 && waypoints.size() > 2) {
+                waypoints.pop_back();  // 明示 open なのに端点一致 → 閉ループ扱いを避ける
             }
         }
 

@@ -96,3 +96,46 @@ TEST(FastLapVehicleTest, AngleModeKeepsLegacySteeringWheelContract) {
     EXPECT_DOUBLE_EQ(vehicle.state().delta_sw, 0.0);
     EXPECT_DOUBLE_EQ(vehicle.state().ddelta_sw, 0.0);
 }
+
+// Issue #30: semi-implicit tire deflection keeps dt = 10 ms stable where v_c·dt/L is large
+// (explicit RK4 stability limit ≈ 2.8) and from near rest.
+TEST(FastLapVehicleTest, TireDeflectionStableAtTenMsHighAndLowSpeed) {
+    VehicleParams params = VehicleParams::default_fsae();
+    for (double v0 : {0.3, 2.0, 32.0}) {
+        FastLapVehicle vehicle(params);
+        vehicle.reset();
+        vehicle.set_map_pose(0.0, 0.0, 0.0);
+        vehicle.set_initial_velocity(v0);
+        DriverInput input;
+        input.steering = 0.02;
+        input.throttle = 0.4;
+        input.gear = 2;
+        for (int i = 0; i < 300; ++i) vehicle.step_adaptive(0.01, input);
+        const auto& s = vehicle.state();
+        EXPECT_TRUE(std::isfinite(s.vx) && std::isfinite(s.r)) << "v0=" << v0;
+        for (int w = 0; w < 4; ++w) {
+            EXPECT_LT(std::abs(s.tire_xi[w]), 0.2) << "v0=" << v0 << " wheel " << w;
+            EXPECT_LT(std::abs(s.tire_eta[w]), 0.2) << "v0=" << v0 << " wheel " << w;
+        }
+        EXPECT_GT(s.vx, v0 * 0.5) << "v0=" << v0;
+    }
+}
+
+// Issue #30: the surrogate uses the same AeroMap4D as the 14DOF (direct_load mode honoured).
+TEST(FastLapVehicleTest, UsesAeroMap4D) {
+    auto coast = [](VehicleParams params) {
+        FastLapVehicle vehicle(params);
+        vehicle.reset();
+        vehicle.set_map_pose(0.0, 0.0, 0.0);
+        vehicle.set_initial_velocity(25.0);
+        DriverInput input;
+        for (int i = 0; i < 100; ++i) vehicle.step_adaptive(0.01, input);
+        return vehicle.state().vx;
+    };
+    VehicleParams coeff = VehicleParams::default_fsae();
+    VehicleParams direct = coeff;
+    direct.aero.map_mode = "direct_load";
+    direct.aero.Fx_ref_total = -10.0 * 0.5 * coeff.aero.rho * coeff.aero.CD_A
+                             * coeff.aero.reference_speed * coeff.aero.reference_speed;
+    EXPECT_LT(coast(direct), coast(coeff) - 0.5);  // 10x drag map must slow the coast-down
+}

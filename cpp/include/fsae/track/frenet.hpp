@@ -52,6 +52,7 @@ public:
             double theta = 0.0;
             double point_x = 0.0;
             double point_y = 0.0;
+            std::size_t index = 0;
         };
 
         const double track_length = track_.length();
@@ -101,6 +102,7 @@ public:
                 best.theta = pt.theta;
                 best.point_x = pt.x;
                 best.point_y = pt.y;
+                best.index = static_cast<std::size_t>(&pt - points.data());
             }
         };
 
@@ -189,6 +191,9 @@ public:
         if (!best.found) {
             best = search(closed_loop ? track_length : std::numeric_limits<double>::max(), false);
         }
+        if (best.found && points.size() >= 2) {
+            project_onto_adjacent_segments(best, x, y, points, closed_loop);
+        }
 
         double best_unwrapped_s = best.found ? best.unwrapped_s : 0.0;
         double best_s = best.found ? wrap_s(best_unwrapped_s) : 0.0;
@@ -253,6 +258,53 @@ public:
     }
 
 private:
+    /// 最近傍点の前後 2 区間へ直交射影し、s・θ・基準点を区間内で補間する
+    /// （点スナップによる ±ds/2 の s 量子化を除去、Issue #25）。
+    template <typename CandidateT>
+    static void project_onto_adjacent_segments(
+        CandidateT& best, double x, double y,
+        const std::vector<TrackPoint>& points, bool closed_loop)
+    {
+        const std::size_t n = points.size();
+        const std::size_t i = best.index;
+        // 閉ループは末尾点 == 先頭点（重複）なので隣接は 1 つ飛ばす
+        const bool has_prev = i > 0 || closed_loop;
+        const bool has_next = i + 1 < n || closed_loop;
+        const std::size_t ip = i > 0 ? i - 1 : n - 2;
+        const std::size_t in = i + 1 < n ? i + 1 : 1;
+
+        double best_d2 = std::numeric_limits<double>::max();
+        double ds_shift = 0.0, px = best.point_x, py = best.point_y, th = best.theta;
+        auto try_segment = [&](const TrackPoint& a, const TrackPoint& b, double s_a_rel, bool a_is_best) {
+            const double ex = b.x - a.x, ey = b.y - a.y;
+            const double len2 = ex * ex + ey * ey;
+            if (len2 < 1e-12) return;
+            const double t = std::clamp(((x - a.x) * ex + (y - a.y) * ey) / len2, 0.0, 1.0);
+            const double qx = a.x + t * ex, qy = a.y + t * ey;
+            const double d2 = (x - qx) * (x - qx) + (y - qy) * (y - qy);
+            if (d2 < best_d2) {
+                best_d2 = d2;
+                const double len = std::sqrt(len2);
+                ds_shift = a_is_best ? t * len : s_a_rel + t * len;
+                px = qx;
+                py = qy;
+                th = a.theta + t * normalize_angle(b.theta - a.theta);
+            }
+        };
+        const auto& p = points[i];
+        if (has_next) try_segment(p, points[in], 0.0, true);
+        if (has_prev) {
+            const auto& a = points[ip];
+            const double seg = std::hypot(p.x - a.x, p.y - a.y);
+            try_segment(a, p, -seg, false);
+        }
+        if (best_d2 == std::numeric_limits<double>::max()) return;
+        best.unwrapped_s += ds_shift;
+        best.point_x = px;
+        best.point_y = py;
+        best.theta = th;
+    }
+
     static double normalize_angle(double angle) {
         if (std::isnan(angle) || std::isinf(angle)) return 0.0;
         angle = std::fmod(angle + M_PI, 2.0 * M_PI);

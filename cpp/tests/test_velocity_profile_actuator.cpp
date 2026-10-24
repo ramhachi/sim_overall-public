@@ -26,7 +26,6 @@ laptime::VehiclePerformance fast_profile_perf() {
     perf.cd_a = 0.0;
     perf.max_lon_accel = 8.0 * 9.81;
     perf.max_lon_decel = 8.0 * 9.81;
-    perf.warmup_distance = 0.0;
     return perf;
 }
 

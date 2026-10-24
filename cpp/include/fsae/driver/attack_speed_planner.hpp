@@ -12,6 +12,7 @@
 #include <cmath>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -60,6 +61,8 @@ struct AttackSpeedPlannerConfig {
     double understeer_gradient = 0.002;      // [rad/(m/s^2)]
     double narrow_margin_threshold = 1.05;   // [m]
     double narrow_margin_speed = 8.0;        // [m/s]
+    // Plant δ_ss(v, κ) table (Issue #27); when set it replaces L·κ + K_us·v²·κ in the steering cap.
+    std::shared_ptr<const laptime::GGVMap> steady_state;
     std::vector<std::array<double, 3>> external_speed_caps; // {s [m], speed [m/s], radius [m]}
     std::vector<std::array<double, 3>> external_speed_windows; // {s_start [m], s_end [m], speed [m/s]}
 };
@@ -549,6 +552,18 @@ private:
         }
         const double wheelbase = std::max(vehicle_params.mass.wheelbase, 1e-6);
         const double max_angle = std::max(vehicle_params.steering.max_angle, 1e-6);
+        if (config.steady_state && config.steady_state->has_steady_state()) {
+            const auto& table = *config.steady_state;
+            auto reachable = [&](double v) { return table.steer_angle(abs_kappa, v) <= max_angle; };
+            if (!reachable(config.min_speed)) return config.min_speed;
+            if (reachable(config.max_speed)) return config.max_speed;
+            double lo = config.min_speed, hi = config.max_speed;
+            for (int it = 0; it < 40; ++it) {
+                const double mid = 0.5 * (lo + hi);
+                (reachable(mid) ? lo : hi) = mid;
+            }
+            return lo;
+        }
         const double understeer = std::max(config.understeer_gradient, 1e-9);
         const double remaining = max_angle / abs_kappa - wheelbase;
         if (remaining <= 0.0) {

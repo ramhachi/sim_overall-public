@@ -9,6 +9,8 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
+#include <optional>
+#include <limits>
 
 namespace fsae::track {
 
@@ -21,6 +23,10 @@ struct TrackPoint {
     double kappa;      // 曲率 [1/m]
     double width_left;  // 左端までの幅 [m]
     double width_right; // 右端までの幅 [m]
+    double z = 0.0;        // 路面高さ [m]（上向き正、CSV列 "z"）
+    double bank = 0.0;     // バンク角 [rad]（左旋回(κ>0)を助ける向きが正、CSV列 "bank"）
+    double grade = 0.0;    // 縦勾配 [rad]（登り正、CSV列 "grade"、無ければ z から導出）
+    double mu_scale = 1.0; // 路面摩擦スケール [-]（CSV列 "mu_scale"）
 };
 
 /// 曲率ベースのトラックモデル
@@ -76,60 +82,69 @@ public:
         }
     }
 
-    /// 弧長sでの曲率を取得（線形補間）
+    /// 弧長sでの曲率を取得（線形補間、O(log n)）
     double get_curvature(double s) const {
         if (curvature_data_.empty()) return 0.0;
-
-        // 範囲外の場合
         if (s <= curvature_data_.front().first) return curvature_data_.front().second;
         if (s >= curvature_data_.back().first) return curvature_data_.back().second;
-
-        // 線形補間
-        for (size_t i = 0; i < curvature_data_.size() - 1; ++i) {
-            const auto& p0 = curvature_data_[i];
-            const auto& p1 = curvature_data_[i + 1];
-
-            if (s >= p0.first && s < p1.first) {
-                double alpha = (s - p0.first) / (p1.first - p0.first);
-                return p0.second + alpha * (p1.second - p0.second);
-            }
-        }
-
-        return curvature_data_.back().second;
+        auto it = std::upper_bound(curvature_data_.begin(), curvature_data_.end(), s,
+            [](double v, const auto& p) { return v < p.first; });
+        const auto& p1 = *it;
+        const auto& p0 = *(it - 1);
+        const double alpha = (s - p0.first) / std::max(p1.first - p0.first, 1e-12);
+        return p0.second + alpha * (p1.second - p0.second);
     }
 
-    /// 弧長sでのトラックポイントを取得
+    /// 弧長sでのトラックポイントを取得（線形補間、O(log n)）
     TrackPoint get_point(double s) const {
         if (track_points_.empty()) {
             throw std::runtime_error("Track points not generated");
         }
-
-        // 範囲外の場合
         if (s <= track_points_.front().s) return track_points_.front();
         if (s >= track_points_.back().s) return track_points_.back();
+        auto it = std::upper_bound(track_points_.begin(), track_points_.end(), s,
+            [](double v, const TrackPoint& p) { return v < p.s; });
+        const auto& p1 = *it;
+        const auto& p0 = *(it - 1);
+        const double a = (s - p0.s) / std::max(p1.s - p0.s, 1e-12);
+        auto lerp = [a](double u, double v) { return u + a * (v - u); };
+        TrackPoint pt;
+        pt.s = s;
+        pt.x = lerp(p0.x, p1.x);
+        pt.y = lerp(p0.y, p1.y);
+        pt.theta = lerp(p0.theta, p1.theta);
+        pt.kappa = lerp(p0.kappa, p1.kappa);
+        pt.width_left = lerp(p0.width_left, p1.width_left);
+        pt.width_right = lerp(p0.width_right, p1.width_right);
+        pt.z = lerp(p0.z, p1.z);
+        pt.bank = lerp(p0.bank, p1.bank);
+        pt.grade = lerp(p0.grade, p1.grade);
+        pt.mu_scale = lerp(p0.mu_scale, p1.mu_scale);
+        return pt;
+    }
 
-        // 線形補間
-        for (size_t i = 0; i < track_points_.size() - 1; ++i) {
-            const auto& p0 = track_points_[i];
-            const auto& p1 = track_points_[i + 1];
-
-            if (s >= p0.s && s < p1.s) {
-                double alpha = (s - p0.s) / (p1.s - p0.s);
-
-                TrackPoint pt;
-                pt.s = s;
-                pt.x = p0.x + alpha * (p1.x - p0.x);
-                pt.y = p0.y + alpha * (p1.y - p0.y);
-                pt.theta = p0.theta + alpha * (p1.theta - p0.theta);
-                pt.kappa = p0.kappa + alpha * (p1.kappa - p0.kappa);
-                pt.width_left = p0.width_left + alpha * (p1.width_left - p0.width_left);
-                pt.width_right = p0.width_right + alpha * (p1.width_right - p0.width_right);
-
-                return pt;
+    /// 路面高さ z_road(x, y) [m]（上向き正）。プラントが輪毎に呼ぶ想定（WIRING.md 参照）。
+    /// 最近傍区間の z を線形補間（O(n) 全探索。毎ステップ呼ぶなら FrenetConverter の s から get_point(s).z を使う）
+    /// ponytail: O(n) scan, use get_point(frenet.s).z in hot loops.
+    double road_height_at(double x, double y) const {
+        if (track_points_.size() < 2) return track_points_.empty() ? 0.0 : track_points_.front().z;
+        double best_d2 = std::numeric_limits<double>::max();
+        double best_z = track_points_.front().z;
+        for (std::size_t i = 0; i + 1 < track_points_.size(); ++i) {
+            const auto& a = track_points_[i];
+            const auto& b = track_points_[i + 1];
+            const double ex = b.x - a.x, ey = b.y - a.y;
+            const double len2 = ex * ex + ey * ey;
+            const double t = len2 > 1e-12
+                ? std::clamp(((x - a.x) * ex + (y - a.y) * ey) / len2, 0.0, 1.0) : 0.0;
+            const double dx = a.x + t * ex - x, dy = a.y + t * ey - y;
+            const double d2 = dx * dx + dy * dy;
+            if (d2 < best_d2) {
+                best_d2 = d2;
+                best_z = a.z + t * (b.z - a.z);
             }
         }
-
-        return track_points_.back();
+        return best_z;
     }
 
     /// トラック全長
@@ -141,11 +156,22 @@ public:
     const std::vector<TrackPoint>& points() const { return track_points_; }
 
     /// トラックポイントを上書き（解析的計算用）
-    std::vector<TrackPoint>& mutable_points() { return track_points_; }
+    std::vector<TrackPoint>& mutable_points() { closed_cache_.reset(); return track_points_; }
 
-    /// 周回トラック（閉じたループ）かどうかを判定
+    /// 周回/非周回を明示（CSV `# closed=` / CLI `--track-closed|--track-open`）。ヒューリスティックより優先。
+    void set_closed(bool closed) { explicit_closed_ = closed; }
+    bool has_explicit_closed() const { return explicit_closed_.has_value(); }
+
+    /// 周回トラック（閉じたループ）かどうか。明示フラグ優先、無ければヒューリスティック（結果はキャッシュ）
     bool is_closed_loop() const {
+        if (explicit_closed_) return *explicit_closed_;
         if (is_loop_forced_) return true;
+        if (!closed_cache_) closed_cache_ = compute_closed_heuristic();
+        return *closed_cache_;
+    }
+
+private:
+    bool compute_closed_heuristic() const {
         if (curvature_data_.empty() || track_points_.empty()) return false;
 
         // 終点と始点の距離をチェック
@@ -178,10 +204,10 @@ public:
         double n_revolutions = total_angle_change / (2.0 * M_PI);
         double fractional_part = std::abs(n_revolutions - std::round(n_revolutions));
         constexpr double angle_tolerance = 10.0 * M_PI / 180.0;  // 10度
-        return (fractional_part * 2.0 * M_PI) < angle_tolerance;
+        // 0 回転（直線・S 字）は閉ループではない
+        return std::abs(std::round(n_revolutions)) >= 1.0 && (fractional_part * 2.0 * M_PI) < angle_tolerance;
     }
 
-private:
     /// トラックポイントを生成（積分により座標を計算）
     void generate_track_points() {
         if (curvature_data_.empty()) return;
@@ -214,9 +240,11 @@ private:
             // θ(s) = θ₀ + ∫κ(s')ds'
             // x(s) = x₀ + ∫cos(θ(s'))ds'
             // y(s) = y₀ + ∫sin(θ(s'))ds'
+            // 中点ヘディング（一定κ区間で円弧に対し2次精度、旧: 半陰オイラー1次）
+            const double theta_mid = theta + 0.5 * kappa * ds;
+            x += std::cos(theta_mid) * ds;
+            y += std::sin(theta_mid) * ds;
             theta += kappa * ds;
-            x += std::cos(theta) * ds;
-            y += std::sin(theta) * ds;
             s += ds;
         }
 
@@ -252,6 +280,8 @@ private:
     double x0_, y0_, theta0_;
     double track_width_;
     bool is_loop_forced_ = false;
+    std::optional<bool> explicit_closed_;
+    mutable std::optional<bool> closed_cache_;
 };
 
 /// 円形トラックを生成（解析的計算版）
@@ -482,13 +512,15 @@ inline CurvatureBasedTrack create_acceleration_track(
     curvature_data.emplace_back(length, 0.0);
     
     // 東向きスタート (θ = 0)
-    return CurvatureBasedTrack(
+    CurvatureBasedTrack track(
         curvature_data,
         0.0,        // x0
         0.0,        // y0
         0.0,        // theta0 (東向き)
         track_width
     );
+    track.set_closed(false);  // 直線は非周回（旧ヒューリスティックは ∫κ=0 を閉ループと誤判定していた）
+    return track;
 }
 
 } // namespace fsae::track

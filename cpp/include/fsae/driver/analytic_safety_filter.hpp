@@ -7,9 +7,12 @@
 /// stability envelopes without a numerical optimizer.  It is an operational
 /// safety governor, not a formal CBF or friction-circle proof.
 
+#include "../laptime/ggv_map.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 
 namespace fsae::driver {
 
@@ -23,6 +26,9 @@ struct AnalyticSafetyConfig {
     double max_yaw_error = 0.55;        // [rad/s]
     double stability_speed_cap = 8.0;   // [m/s]
     double fallback_speed = 1.0;        // [m/s]
+    // Plant steady-state limits (Issue #27). When set, max_sideslip becomes beta_max(v) and
+    // |yaw_rate| > r_max(v) also triggers the stability cap; the fixed values stay as fallback.
+    std::shared_ptr<const laptime::GGVMap> steady_state;
 };
 
 struct AnalyticSafetyRequest {
@@ -38,6 +44,7 @@ struct AnalyticSafetyObservation {
     double speed = 0.0;                 // [m/s]
     double sideslip = 0.0;              // [rad]
     double yaw_rate_error = 0.0;        // [rad/s]
+    double yaw_rate = std::numeric_limits<double>::quiet_NaN(); // [rad/s], optional (NaN = unused)
 };
 
 struct AnalyticSafetyOutput {
@@ -108,8 +115,14 @@ public:
                     * (std::max(request.base_target_speed, config_.margin_speed_cap)
                        - config_.margin_speed_cap);
         }
-        if (std::abs(observation.sideslip) > config_.max_sideslip
-                || std::abs(observation.yaw_rate_error) > config_.max_yaw_error) {
+        const bool table = config_.steady_state && config_.steady_state->has_steady_state();
+        const double max_sideslip = table
+            ? config_.steady_state->beta_limit(observation.speed) : config_.max_sideslip;
+        const bool yaw_over_limit = table && std::isfinite(observation.yaw_rate)
+            && std::abs(observation.yaw_rate) > config_.steady_state->yaw_rate_limit(observation.speed);
+        if (std::abs(observation.sideslip) > max_sideslip
+                || std::abs(observation.yaw_rate_error) > config_.max_yaw_error
+                || yaw_over_limit) {
             output.stability_speed_cap = config_.stability_speed_cap;
         }
         output.target_speed = std::max(

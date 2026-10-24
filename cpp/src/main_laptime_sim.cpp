@@ -34,6 +34,7 @@
 #include <vector>
 #include <array>
 #include <limits>
+#include <optional>
 
 using namespace fsae;
 using json = nlohmann::json;
@@ -59,7 +60,8 @@ struct SimulationConfig {
     double max_speed = 50.0;
 
     // 初期速度（Phase 7改善v2: さらに安定性重視）
-    double initial_speed = 6.0;        // [m/s] (8.0→6.0に低下、安定性向上)
+    double initial_speed = 6.0;        // [m/s] ローリングスタート既定（acceleration は 0 = 静止発進, Issue #24）
+    bool initial_speed_explicit = false;
 
     // PIDゲインプリセット
     std::string gain_preset = "default";  // "conservative", "default", "aggressive"
@@ -192,6 +194,20 @@ struct SimulationConfig {
     std::string rl_teacher_output_file = "";
     std::string velocity_profile_input_file = "";
     std::string velocity_profile_output_file = "";
+
+    // 単一摩擦利用マージン（Issue #26, --friction-margin）
+    double friction_margin = laptime::kDefaultFrictionMargin;
+
+    // オフライン GGV（Issue #23, --ggv）。空なら閉形式プランナー。--max-lon-* は GGV 時は上限のみ
+    std::string ggv_file;
+    bool max_lon_explicit = false;
+
+    // 風ベクトル（地図座標 [m/s]、Issue #28, --wind wx,wy）。プラントへの受け渡しは WIRING.md
+    double wind_x = 0.0;
+    double wind_y = 0.0;
+
+    // CSV トラックの周回フラグ（--track-closed / --track-open）。未指定は CSV `# closed=` → 警告付きヒューリスティック
+    std::optional<bool> track_closed;
 };
 
 bool is_autocross_like_track(const SimulationConfig& config) {
@@ -650,7 +666,7 @@ track::CurvatureBasedTrack create_track(const SimulationConfig& config, LapResul
         }
         std::cout << "Loading track from CSV: " << config.track_name << std::endl;
         try {
-            auto waypoints = track::WaypointTrackBuilder::load_from_csv(config.track_name, config.track_width);
+            auto waypoints = track::WaypointTrackBuilder::load_from_csv(config.track_name, config.track_width, config.track_closed);
             return track::WaypointTrackBuilder(waypoints, config.track_width).build();
         } catch (const std::exception& e) {
             throw DiagnosticFailure(
@@ -681,7 +697,7 @@ track::CurvatureBasedTrack create_track(const SimulationConfig& config, LapResul
             result->track_csv_path = csv_path;
         }
         try {
-            auto waypoints = track::WaypointTrackBuilder::load_from_csv(csv_path, config.track_width);
+            auto waypoints = track::WaypointTrackBuilder::load_from_csv(csv_path, config.track_width, config.track_closed);
             return track::WaypointTrackBuilder(waypoints, config.track_width).build();
         } catch (const std::exception& e) {
             throw DiagnosticFailure(
@@ -961,6 +977,11 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
     if (config.eval_mode == "fast" && !config.dt_explicit) {
         config.dt = 0.01;
     }
+    // FSAE acceleration はスタンディングスタート（Issue #24）
+    if (!config.initial_speed_explicit &&
+        (config.track_name == "acceleration" || config.track_name == "accel")) {
+        config.initial_speed = 0.0;
+    }
 
     auto fail_result = [](LapResult& result, const std::string& code,
                           const std::string& message, double failure_time) {
@@ -1048,7 +1069,7 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
     perf.rho = vehicle_params.aero.rho > 0.1 ? vehicle_params.aero.rho : 1.225;
     perf.mu_lat = vehicle_params.tire.mu_y_max;
     perf.mu_lon = vehicle_params.tire.mu_x_max;
-    perf.safety_factor = 0.95;
+    perf.friction_margin = config.friction_margin;  // 単一マージン（Issue #26）、旧 safety_factor 0.95 は廃止
     perf.use_load_sensitive_lateral_limit =
         config.eval_mode == "fast" || vehicle_params.tire.model_type == "tmeasy";
     perf.tire_nominal_load = vehicle_params.tire.Fz_nom;
@@ -1120,7 +1141,6 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
         perf.max_speed = 9.5;           // [m/s] ≈ 34 km/h
         perf.max_lat_accel = 1.0 * 9.81; // 加速度制限も整合させる
         perf.enforce_max_lat_accel = true;
-        perf.safety_factor = 0.80;
     }
 
     if (vehicle_params.steering.torque_mode) {
@@ -1166,6 +1186,29 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
         result.velocity_profile_uses_planned_line = !perf.curvature_override.empty();
     }
 
+    if (config.wind_x != 0.0 || config.wind_y != 0.0) {
+        // ponytail: CLI + config only; the 14DOF relative-air-speed/yaw hook is specified in WIRING.md
+        std::cerr << "[wind] (" << config.wind_x << ", " << config.wind_y
+                  << ") m/s map frame: NOT yet applied — plant hook pending (WIRING.md)" << std::endl;
+    }
+    if (!config.ggv_file.empty()) {
+        try {
+            perf.ggv = std::make_shared<const laptime::GGVMap>(laptime::GGVMap::load(config.ggv_file));
+        } catch (const std::exception& error) {
+            fail_result(result, "ggv_load_failed", error.what(), 0.0);
+            return result;
+        }
+        perf.lon_limits_are_caps = config.max_lon_explicit;
+        std::cerr << "[planner] GGV path: " << config.ggv_file << " (" << perf.ggv->source
+                  << "), friction_margin=" << perf.friction_margin
+                  << (perf.lon_limits_are_caps ? ", --max-lon-* as caps" : "") << std::endl;
+    } else {
+        std::cerr << "[planner] closed-form path (scalar mu ellipse, max_lon_accel="
+                  << perf.max_lon_accel << ", max_lon_decel=" << perf.max_lon_decel
+                  << ", friction_margin=" << perf.friction_margin
+                  << "); pass --ggv <file> for the 14DOF-derived GGV" << std::endl;
+    }
+
     std::vector<laptime::VelocityPoint> velocity_profile;
     if (!config.velocity_profile_input_file.empty()) {
         try {
@@ -1182,6 +1225,11 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
     } else {
         laptime::VelocityProfileGenerator vel_gen(perf);
         velocity_profile = vel_gen.generate(*track, 1.0, config.initial_speed);
+        if (velocity_profile.size() > 1 && velocity_profile.front().v < 1e-3) {
+            // 静止発進: v(0)=0 は位置基準の目標速度として特異（追従器が発進しない）。
+            // 先頭点だけ 1 サンプル先の到達可能速度を目標上限にする（プラント初速は 0 のまま）。
+            velocity_profile.front().v = velocity_profile[1].v;
+        }
         result.velocity_profile_fingerprint =
             laptime::velocity_profile_fingerprint(velocity_profile);
         if (!config.velocity_profile_output_file.empty()) {
@@ -1337,12 +1385,9 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
                     config.driver_capability_profile_file);
                 driver::apply_attack_overrides(profile.attack_overrides, mpc_config);
             }
+            // 旧: 質量則 pow(282/m, 0.675) を lateral_safety に追加で掛けていた → 廃止（Issue #26, 係数 1.0）
             if (config.attack_speed_lateral_safety > 0.0) {
                 mpc_config.attack_speed_lateral_safety = config.attack_speed_lateral_safety;
-            }
-            if (config.attack_speed_lateral_safety <= 0.0) {
-                mpc_config.attack_speed_lateral_safety *=
-                    driver::attack_vehicle_lateral_safety_scale(vehicle_params);
             }
             if (config.attack_speed_braking_safety > 0.0) {
                 mpc_config.attack_speed_braking_safety = config.attack_speed_braking_safety;
@@ -2118,7 +2163,7 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
             }
             input = rl_hold_input;
             if (!driver::rl_driver_speed_limits_disabled()) {
-                driver::apply_rl_curvature_speed_limit(vehicle->state(), *track, frenet_converter, input, vehicle_params);
+                driver::apply_rl_curvature_speed_limit(vehicle->state(), *track, frenet_converter, input, vehicle_params, perf.ggv.get());
             }
             rl_driver->update_prev_action(input.steering, input.throttle, input.brake);
         } else if (use_predictive_driver) {
@@ -3068,12 +3113,19 @@ int exit_code_for_result(const LapResult& result) {
     return 1;
 }
 
+static void warn_deprecated_margin(const std::string& arg) {
+    std::cerr << "Warning: " << arg << " is deprecated (Issue #26); use --friction-margin "
+              << "(single margin applied once to the lateral/braking limits)." << std::endl;
+}
+
 int main(int argc, char** argv) {
     SimulationConfig config;
     // Argument parsing
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--track" && i + 1 < argc) config.track_name = argv[++i];
+        else if (arg == "--track-closed") config.track_closed = true;
+        else if (arg == "--track-open") config.track_closed = false;
         else if (arg == "--gain-preset" && i + 1 < argc) config.gain_preset = argv[++i];
         else if (arg == "--radius" && i + 1 < argc) config.track_radius = std::stod(argv[++i]);
         else if ((arg == "--track-width" || arg == "--width") && i + 1 < argc) config.track_width = std::stod(argv[++i]);
@@ -3096,8 +3148,9 @@ int main(int argc, char** argv) {
         else if (arg == "--lpv-model" && i + 1 < argc) config.lpv_model = argv[++i];
         else if (arg == "--lpv-lateral-weight-scale" && i + 1 < argc) config.lpv_lateral_weight_scale = std::stod(argv[++i]);
         else if (arg == "--lpv-heading-weight-scale" && i + 1 < argc) config.lpv_heading_weight_scale = std::stod(argv[++i]);
-        else if (arg == "--attack-speed-lateral-safety" && i + 1 < argc) config.attack_speed_lateral_safety = std::stod(argv[++i]);
-        else if (arg == "--attack-speed-braking-safety" && i + 1 < argc) config.attack_speed_braking_safety = std::stod(argv[++i]);
+        else if (arg == "--attack-speed-lateral-safety" && i + 1 < argc) { config.attack_speed_lateral_safety = std::stod(argv[++i]); warn_deprecated_margin(arg); }
+        else if (arg == "--attack-speed-braking-safety" && i + 1 < argc) { config.attack_speed_braking_safety = std::stod(argv[++i]); warn_deprecated_margin(arg); }
+        else if (arg == "--friction-margin" && i + 1 < argc) config.friction_margin = std::stod(argv[++i]);
         else if (arg == "--attack-speed-accel-limit" && i + 1 < argc) config.attack_speed_accel_limit = std::stod(argv[++i]);
         else if (arg == "--attack-rollout-understeer-gradient" && i + 1 < argc) config.attack_rollout_understeer_gradient = std::stod(argv[++i]);
         else if (arg == "--attack-floor-straight" && i + 1 < argc) config.attack_floor_straight = std::stod(argv[++i]);
@@ -3128,14 +3181,22 @@ int main(int argc, char** argv) {
         else if (arg == "--driver-capability-profile" && i + 1 < argc) config.driver_capability_profile_file = argv[++i];
         else if (arg == "--laps" && i + 1 < argc) config.laps = std::stoi(argv[++i]);
         else if (arg == "--output_json") config.output_json_result = true;
-        else if (arg == "--initial-speed" && i + 1 < argc) config.initial_speed = std::stod(argv[++i]);
+        else if (arg == "--initial-speed" && i + 1 < argc) { config.initial_speed = std::stod(argv[++i]); config.initial_speed_explicit = true; }
         else if (arg == "--max-speed" && i + 1 < argc) config.max_speed = std::stod(argv[++i]);
         else if (arg == "--max-lat-accel" && i + 1 < argc) {
             config.max_lat_accel = std::stod(argv[++i]);
             config.max_lat_accel_explicit = true;
         }
-        else if (arg == "--max-lon-accel" && i + 1 < argc) config.max_lon_accel = std::stod(argv[++i]);
-        else if (arg == "--max-lon-decel" && i + 1 < argc) config.max_lon_decel = std::stod(argv[++i]);
+        else if (arg == "--max-lon-accel" && i + 1 < argc) { config.max_lon_accel = std::stod(argv[++i]); config.max_lon_explicit = true; }
+        else if (arg == "--max-lon-decel" && i + 1 < argc) { config.max_lon_decel = std::stod(argv[++i]); config.max_lon_explicit = true; }
+        else if (arg == "--ggv" && i + 1 < argc) config.ggv_file = argv[++i];
+        else if (arg == "--wind" && i + 1 < argc) {
+            const std::string w = argv[++i];
+            const auto comma = w.find(',');
+            if (comma == std::string::npos) { std::cerr << "--wind expects wx,wy [m/s]" << std::endl; return 1; }
+            config.wind_x = std::stod(w.substr(0, comma));
+            config.wind_y = std::stod(w.substr(comma + 1));
+        }
         else if (arg == "--kp-steer" && i + 1 < argc) { config.Kp_steer = std::stod(argv[++i]); config.use_custom_gains = true; }
         else if (arg == "--kd-steer" && i + 1 < argc) { config.Kd_steer = std::stod(argv[++i]); config.use_custom_gains = true; }
         else if (arg == "--ki-steer" && i + 1 < argc) { config.Ki_steer = std::stod(argv[++i]); config.use_custom_gains = true; }
@@ -3277,6 +3338,10 @@ int main(int argc, char** argv) {
     }
     if (config.laps < 1) {
         std::cerr << "--laps must be >= 1." << std::endl;
+        return 1;
+    }
+    if (!(config.friction_margin > 0.0 && config.friction_margin <= 1.0)) {
+        std::cerr << "--friction-margin must be in (0, 1]." << std::endl;
         return 1;
     }
     if (!config.velocity_profile_input_file.empty() &&
