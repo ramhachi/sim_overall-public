@@ -11,7 +11,8 @@
  *   "nodes": [[x,y,z], ...],                                   // m
  *   "elements": [[ni, nj, D, t, E, G, rho, shape, jf, kAy, kAz, off_i, off_j], ...],
  *   "bcs": [[node, dof, value], ...],                          // 1-indexed
- *   "loads": [[node, dof, value], ...]
+ *   "loads": [[node, dof, value], ...],
+ *   "rigid_links": [[master, slave], ...]                      // optional RBE2
  * }
  * Output JSON: {"success", "U": [[ux,uy,uz,rx,ry,rz], ...], "K_torsion", "mass",
  *               "element_forces": Mx12 local end forces, "element_stress_vm" [MPa],
@@ -80,7 +81,7 @@ int run_selftest() {
     {   // 1. axial along global y: delta = P L / (E A)
         json in = cantilever({0, 1, 0}, 1.0, 1, round);
         in["loads"].push_back({2, 2, P});
-        check("axial along y", fo::solve_json(in)["U"][1][1].get<double>(), P * 1.0 / (Ep * A), 1e-6);
+        check("axial along y", fo::solve_json(in)["U"][1][1].get<double>(), P * 1.0 / (Ep * A), 1e-12);
     }
     {   // 2. short skew cantilever, tip load normal to axis: PL^3/3EI + PL/kGA
         const Eigen::Vector3d a(1.0 / 3, 2.0 / 3, 2.0 / 3), f(2.0 / 3, 1.0 / 3, -2.0 / 3);
@@ -150,6 +151,38 @@ int run_selftest() {
         const json cout_ = fo::solve_json(comp);
         check("Euler buckling ratio", cout_["buckling_ratio"].get<double>(), P / (fo::kPi * fo::kPi * Ep * I / (L * L)), 1e-9);
         check("axial stress [MPa]", cout_["stress_max"].get<double>(), P / sec.A, 1e-6);
+    }
+
+    {   // 7. rigid links: load on an offset slave twists the tip by P e L / (G J);
+        //    clamping through a slave (Lagrange row) gives the plain cantilever answer.
+        const double L = 0.5, e = 0.1;
+        json in = cantilever({1, 0, 0}, L, 1, round);
+        in["nodes"].push_back({L, e, 0.0});
+        in["rigid_links"] = {{2, 3}};
+        in["loads"].push_back({3, 3, P});
+        const json out = fo::solve_json(in);
+        const double tw = P * e * L / (Gp * J), uz = P * L * L * L / (3 * Ep * I) + P * L / (Gp * kA);
+        check("rigid link: tip twist from offset load", out["U"][1][3].get<double>(), tw, 1e-9);
+        check("rigid link: slave uz = uz_m + theta_x * e", out["U"][2][2].get<double>(), uz + tw * e, 1e-9);
+
+        // root clamped only through three pinned points of one rigid body {1, 3, 4}:
+        // pins on slaves 3 and 4 are Lagrange rows, 9 constraints for 6 DOFs (redundant)
+        json bc = cantilever({1, 0, 0}, L, 1, round);
+        bc["nodes"].push_back({-0.05, 0.0, 0.0});
+        bc["nodes"].push_back({-0.05, 0.05, 0.0});
+        bc["rigid_links"] = {{3, 1}, {4, 3}};
+        bc["bcs"] = json::array();
+        for (int n : {1, 3, 4})
+            for (int d = 1; d <= 3; ++d) bc["bcs"].push_back({n, d, 0.0});
+        bc["loads"].push_back({2, 3, P});
+        check("pinned rigid body via slave BCs", fo::solve_json(bc)["U"][1][2].get<double>(), uz, 1e-8);
+
+        json mech = cantilever({1, 0, 0}, L, 1, round);
+        mech["bcs"] = {{1, 1, 0.0}, {1, 2, 0.0}, {1, 3, 0.0}};  // pinned root: mechanism
+        mech["loads"].push_back({2, 3, P});
+        bool threw = false;
+        try { fo::solve_json(mech); } catch (const std::exception&) { threw = true; }
+        check("mechanism is reported", threw ? 1.0 : 0.0, 1.0, 0.0);
     }
 
     std::cout << (g_failures ? "SELFTEST FAILED" : "SELFTEST PASSED") << " (" << g_failures << " failures)\n";

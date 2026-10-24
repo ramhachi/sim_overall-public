@@ -12,7 +12,7 @@ function result = beam_fem_solver(nodes, elements, bcs, loads, options)
 %   elements - Mx13 double [node_i, node_j, D_outer, t, E, G, rho, shape, jf, kAy, kAz, off_i, off_j] (Mx11 / legacy Mx9 accepted)
 %   bcs      - Bx3 double [node_id, dof, value]
 %   loads    - Lx3 double [node_id, dof, value]
-%   options  - struct (currently unused)
+%   options  - struct, optional .rigid_links Rx2 [node_a, node_b] (rigid bodies, RBE2)
 %
 % Output:
 %   result - struct with fields:
@@ -45,6 +45,9 @@ function result = beam_fem_solver(nodes, elements, bcs, loads, options)
     input_json.elements = force2D(elements);
     input_json.bcs = force2D(bcs);
     input_json.loads = force2D(loads);
+    if nargin >= 5 && isstruct(options) && isfield(options, 'rigid_links') && ~isempty(options.rigid_links)
+        input_json.rigid_links = force2D(options.rigid_links);
+    end
 
     % Write input JSON
     fid = fopen(input_file, 'w');

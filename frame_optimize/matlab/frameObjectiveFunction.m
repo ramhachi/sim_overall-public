@@ -260,8 +260,12 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
     if isfield(config, 'load_case_eval_mode') && strcmpi(config.load_case_eval_mode, 'torsion_only')
         evaluate_all_cases = false;
     end
+    frame_links = zeros(0, 2);
+    if isfield(elements_geom, 'rigid_links')
+        frame_links = elements_geom.rigid_links;
+    end
     [fem_result, case_results, case_displacement_penalty, fem_success] = ...
-        solveObjectiveLoadCases(nodes, elements_fem, dynamic_cases, evaluate_all_cases, config);
+        solveObjectiveLoadCases(nodes, elements_fem, dynamic_cases, evaluate_all_cases, config, frame_links);
     if ~fem_success
         obj_val = rejectedDesignObjective(config, 1e8);
         results = fem_result;
@@ -454,12 +458,15 @@ function element_groups = build_element_groups(group_indices, group_names)
     end
 end
 
-function [primary_result, case_results, displacement_penalty, success] = solveObjectiveLoadCases(nodes, elements_fem, load_cases, evaluate_all_cases, config)
+function [primary_result, case_results, displacement_penalty, success] = solveObjectiveLoadCases(nodes, elements_fem, load_cases, evaluate_all_cases, config, frame_links)
     if nargin < 4
         evaluate_all_cases = false;
     end
     if nargin < 5
         config = struct();
+    end
+    if nargin < 6
+        frame_links = zeros(0, 2);
     end
 
     num_cases = 1;
@@ -477,7 +484,7 @@ function [primary_result, case_results, displacement_penalty, success] = solveOb
 
     for ci = 1:num_cases
         try
-            result = solveFemCase(nodes, elements_fem, load_cases(ci).bcs, load_cases(ci).loads, config);
+            result = solveFemCase(nodes, elements_fem, load_cases(ci), config, frame_links);
         catch ME
             fprintf('   [DEBUG] FEM Solver Exception (%s): %s\n', load_cases(ci).name, ME.message);
             warning('FEM Solver failed for %s: %s', load_cases(ci).name, ME.message);
@@ -524,13 +531,23 @@ function [primary_result, case_results, displacement_penalty, success] = solveOb
     success = true;
 end
 
-function result = solveFemCase(nodes, elements_fem, bcs, loads, config)
+function result = solveFemCase(nodes, elements_fem, load_case, config, frame_links)
+    % Cases may add fixture nodes (appended after the frame nodes) and rigid links.
+    if isfield(load_case, 'extra_nodes') && ~isempty(load_case.extra_nodes)
+        nodes = [nodes; load_case.extra_nodes];
+    end
+    options = struct('rigid_links', frame_links);
+    if isfield(load_case, 'rigid_links') && ~isempty(load_case.rigid_links)
+        options.rigid_links = [frame_links; load_case.rigid_links];
+    end
+    bcs = load_case.bcs;
+    loads = load_case.loads;
     backend = resolveObjectiveSolverBackend(config);
     switch backend
         case 'mex'
-            result = beam_fem_solver(nodes, elements_fem, bcs, loads);
+            result = beam_fem_solver(nodes, elements_fem, bcs, loads, options);
         case 'tcp_java'
-            result = beam_fem_solver_tcp_java(nodes, elements_fem, bcs, loads);
+            result = beam_fem_solver_tcp_java(nodes, elements_fem, bcs, loads, options);
         otherwise
             error('frameObjectiveFunction:UnknownSolverBackend', ...
                 'Unknown solver backend "%s". Use auto/mex/tcp_java.', backend);

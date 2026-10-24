@@ -52,6 +52,14 @@ assert(any(strcmp(elements_geom.group_names, 'mh_bracing')));
 assert(any(elements_geom.group_indices == find(strcmp(elements_geom.group_names, 'mh_bracing'), 1)));
 assert(any(elements_geom.group_indices == find(strcmp(elements_geom.group_names, 'mh_brace_support'), 1)));
 assert(any(elements_geom.group_indices == find(strcmp(elements_geom.group_names, 'shoulder_bar'), 1)));
+% Every suspension mount attaches to its nearest frame node: rigid tab or one support tube (#52).
+for m = [meta.susp_idx(:); rear_susp_idx(:)]'
+    linked = any(elements_geom.rigid_links(:, 2) == m);
+    tubed = any(elements_geom.connectivity(:) == m);
+    assert(xor(linked, tubed), 'Mount %d must have exactly one attachment kind.', m);
+end
+assert(~any(ismember(elements_geom.connectivity(:), [meta.inner_bracket_idx(:); meta.rear_inner_bracket_idx(:)])), ...
+    'Hard-coded 50 mm bracket tubes must be gone.');
 
 materials = loadMaterials(fullfile(data_dir, 'materials.json'));
 catalog = loadPipeCatalog(fullfile(data_dir, 'pipe_catalog.json'), materials);

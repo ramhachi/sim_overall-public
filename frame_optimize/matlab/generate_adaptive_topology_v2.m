@@ -2,7 +2,10 @@ function elements_geom = generate_adaptive_topology_v2(nodes, meta, config, dist
 % GENERATE_ADAPTIVE_TOPOLOGY_V2 Create regulation-named V2 frame connectivity.
 %
 % The rear free region is only populated aft of the mandatory main-hoop-brace
-% trapezoid. Suspension mounts remain isolated to their bracket nodes.
+% trapezoid. Each suspension mount attaches to its nearest structural frame
+% node: a rigid link (sheet-metal tab) within config.mount_tab_max_m (default
+% 75 mm), otherwise a support tube in the mount's group (#52). The links are
+% returned in elements_geom.rigid_links ([frame_node, mount_node] rows).
 
     if nargin < 4 || isempty(distance_thresholds)
         distance_thresholds = [0.60, 0.65, 0.60];
@@ -16,6 +19,7 @@ function elements_geom = generate_adaptive_topology_v2(nodes, meta, config, dist
 
     D = 25.0; t = 2.0; E = 210; G = 80; rho = 7850; shape = 1; jf = 0.85;
     elements_raw = [];
+    rigid_links = zeros(0, 2);
     adj_matrix = false(n_nodes, n_nodes);
     node_degrees = zeros(n_nodes, 1);
 
@@ -57,10 +61,11 @@ function elements_geom = generate_adaptive_topology_v2(nodes, meta, config, dist
         addEdges([r(1) r(2); r(3) r(4); r(1) r(3); r(2) r(4)], 'secondary_brace');
     end
 
-    addBracketLinks(meta.susp_idx, meta.inner_bracket_idx, [f(1), f(2), f(3), f(4), 1, 2, 3, 4], 'front_susp_mount');
-    if ~isempty(meta.rear_susp_idx) && ~isempty(meta.rear_inner_bracket_idx)
-        addBracketLinks(meta.rear_susp_idx, meta.rear_inner_bracket_idx, [20, 21, 18, 19, 24, 25, 22, 23], 'component_protection');
-    end
+    % ponytail: 75 mm = typical clevis/tab standoff; tune per car if tabs are longer.
+    tab_max = getConfigDefault(config, 'mount_tab_max_m', 0.075);
+    non_structural = [all_susp_nodes, meta.inner_bracket_idx(:)', meta.rear_inner_bracket_idx(:)', meta.diff_mount_idx(:)'];
+    attachMounts(meta.susp_idx, 'front_susp_mount');
+    attachMounts(meta.rear_susp_idx, 'component_protection');
 
     if ~isempty(meta.diff_mount_idx)
         addDiffMountLinks(meta.diff_mount_idx, 'diff_mount');
@@ -70,7 +75,7 @@ function elements_geom = generate_adaptive_topology_v2(nodes, meta, config, dist
     R_rear = distance_thresholds(min(3, numel(distance_thresholds)));
     max_pipe_len = getConfigDefault(config, 'max_rear_free_pipe_length_m', 1.20);
     rear_candidates = find(nodes(:, 1) >= meta.X_brace_end - 1e-6);
-    rear_candidates = setdiff(rear_candidates(:)', all_susp_nodes);
+    rear_candidates = setdiff(rear_candidates(:)', [all_susp_nodes, meta.inner_bracket_idx(:)', meta.rear_inner_bracket_idx(:)']);
 
     if getConfigDefault(config, 'enable_rear_optional_edges', false)
         max_optional_degree = getConfigDefault(config, 'rear_optional_max_node_degree', 4);
@@ -106,6 +111,7 @@ function elements_geom = generate_adaptive_topology_v2(nodes, meta, config, dist
         elements_geom.group_indices = elements_raw(:, 10);
     end
     elements_geom.group_names = group_names;
+    elements_geom.rigid_links = rigid_links;
 
     function addEdges(edge_pairs, group_name)
         for edge_row = 1:size(edge_pairs, 1)
@@ -135,11 +141,16 @@ function elements_geom = generate_adaptive_topology_v2(nodes, meta, config, dist
         end
     end
 
-    function addBracketLinks(mount_idx, bracket_idx, targets, group_name)
-        n = min([numel(mount_idx), numel(bracket_idx), numel(targets)]);
-        for k = 1:n
-            addEdge(mount_idx(k), bracket_idx(k), group_name);
-            addEdge(bracket_idx(k), targets(k), group_name);
+    function attachMounts(mount_idx, group_name)
+        candidates = setdiff(find(node_degrees > 0)', non_structural);
+        for k = 1:numel(mount_idx)
+            m = mount_idx(k);
+            [d, c] = min(vecnorm(nodes(candidates, :) - nodes(m, :), 2, 2));
+            if d <= tab_max
+                rigid_links(end+1, :) = [candidates(c), m]; %#ok<AGROW>
+            else
+                addEdge(m, candidates(c), group_name);
+            end
         end
     end
 

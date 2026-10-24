@@ -317,6 +317,13 @@ Closed-form checks: `beam_fem_standalone --selftest` (CTest `beam_fem_closed_for
   over all non-torsion cases (defaults 50/50). SES equivalence uses `rulebook_baseline` in
   `data/materials.json` (F.3.4.2 values 200 GPa / 305 / 365 MPa, verify against the current rules).
   Not yet: transverse shear stress, local D/t buckling, fatigue (rainflow/Miner is P1 post-processing).
+* **Constraints / attachments (#52)**: BCs are eliminated (no 1e15 penalty); `rigid_links` (JSON key /
+  MEX `options.rigid_links`, node pairs) merge into rigid bodies solved master–slave (RBE2); a BC on a
+  slave DOF becomes a Lagrange row (rank-revealing QR fallback for redundant pins); mechanisms raise an
+  error. Same logic for standalone/server/MEX. V2 suspension mounts attach to the nearest structural node
+  by a rigid tab within `config.mount_tab_max_m` (75 mm) or by one support tube otherwise
+  (`elements_geom.rigid_links`); the hard-coded 50 mm bracket tubes are gone (bracket nodes remain unused).
+  Not yet: engine as RBE2 stressed member (follow-up).
 
 ---
 

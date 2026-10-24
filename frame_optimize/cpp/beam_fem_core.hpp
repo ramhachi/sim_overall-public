@@ -10,6 +10,10 @@
 //   off_i/off_j = rigid end lengths [m] along the member axis (joint inside the
 //   chord tube); the flexible length is Lf = L - off_i - off_j.
 //   Accepted widths: 13, 11 (no offsets) and legacy 9 (Phi = 0 + warning).
+//
+// Constraints: BCs are eliminated (no penalty); rigid links (node pairs) merge into
+// rigid bodies eliminated master-slave (RBE2); a BC on a slave DOF becomes a Lagrange-multiplier row.
+// Nodes not connected (through elements/links) to any BC node are clamped.
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -18,6 +22,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "torsion_rigidity.hpp"
@@ -45,6 +50,7 @@ struct FemInput {
     std::vector<BeamElement> elements;
     std::vector<FemLoad> bcs;    // value = prescribed displacement
     std::vector<FemLoad> loads;  // value = force / moment
+    std::vector<std::pair<int, int>> rigid_links;  // node pairs joined rigidly, 0-indexed
 };
 
 struct FemResult {
@@ -264,13 +270,40 @@ inline FemResult solve_frame(const FemInput& in) {
                                " element(s) without shear area: Euler-Bernoulli (Phi = 0)");
     }
 
-    // Nodes not connected to any BC node (floating parts) are clamped.
+    // Rigid links (RBE2): linked nodes form rigid bodies (union-find, so chains and shared
+    // nodes merge); each body's lowest-index node is the master, every other node is a slave
+    // with u_s = u_m + theta_m x (x_s - x_m), theta_s = theta_m.
+    std::vector<int> root(n_nodes);
+    for (int n = 0; n < n_nodes; ++n) root[n] = n;
+    auto body_of = [&](int n) {
+        while (root[n] != n) n = root[n] = root[root[n]];
+        return n;
+    };
+    for (const auto& link : in.rigid_links) {
+        const int a = link.first, b = link.second;
+        if (a < 0 || a >= n_nodes || b < 0 || b >= n_nodes || a == b) {
+            throw std::runtime_error("Rigid link references invalid nodes");
+        }
+        const int ra = body_of(a), rb = body_of(b);
+        if (ra != rb) root[std::max(ra, rb)] = std::min(ra, rb);
+        adjacency[a].push_back(b);
+        adjacency[b].push_back(a);
+    }
+    std::vector<int> master(n_nodes, -1);
+    for (int n = 0; n < n_nodes; ++n)
+        if (body_of(n) != n) master[n] = body_of(n);
+
+    // Prescribed DOFs (last BC wins); nodes not connected to any BC node are clamped.
     std::vector<char> reachable(n_nodes, 0);
     std::vector<int> queue;
+    std::vector<char> has_bc(n_dof, 0);
+    Eigen::VectorXd bc_value = Eigen::VectorXd::Zero(n_dof);
     for (const auto& bc : in.bcs) {
         if (bc.node < 0 || bc.node >= n_nodes || bc.dof < 0 || bc.dof > 5) {
             throw std::runtime_error("BC references invalid node/dof");
         }
+        has_bc[6 * bc.node + bc.dof] = 1;
+        bc_value(6 * bc.node + bc.dof) = bc.value;
         if (!reachable[bc.node]) {
             reachable[bc.node] = 1;
             queue.push_back(bc.node);
@@ -283,15 +316,52 @@ inline FemResult solve_frame(const FemInput& in) {
                 queue.push_back(nb);
             }
 
-    Eigen::VectorXd F = Eigen::VectorXd::Zero(n_dof);
-    const double penalty = 1e15;
-    for (int n = 0; n < n_nodes; ++n)
-        if (!reachable[n])
-            for (int d = 0; d < 6; ++d) trip.emplace_back(6 * n + d, 6 * n + d, penalty);
-    for (const auto& bc : in.bcs) {
-        trip.emplace_back(6 * bc.node + bc.dof, 6 * bc.node + bc.dof, penalty);
-        F(6 * bc.node + bc.dof) += penalty * bc.value;
+    // u = Tm * q + u_p. Independent DOFs are free or prescribed (eliminated); slave DOFs are
+    // combinations of master DOFs. BCs on slave DOFs become Lagrange-multiplier rows.
+    std::vector<int> free_index(n_dof, -1);
+    Eigen::VectorXd u_p = Eigen::VectorXd::Zero(n_dof);
+    int n_free = 0;
+    for (int n = 0; n < n_nodes; ++n) {
+        if (master[n] != -1) continue;
+        for (int d = 0; d < 6; ++d) {
+            const int g = 6 * n + d;
+            if (!reachable[n]) continue;  // clamped at 0
+            if (has_bc[g]) u_p(g) = bc_value(g);
+            else free_index[g] = n_free++;
+        }
     }
+    std::vector<Eigen::Triplet<double>> tt;
+    auto add_term = [&](int row, int master_dof, double c) {
+        if (c == 0.0) return;
+        if (free_index[master_dof] >= 0) tt.emplace_back(row, free_index[master_dof], c);
+        else u_p(row) += c * u_p(master_dof);
+    };
+    for (int n = 0; n < n_nodes; ++n) {
+        const int m = master[n];
+        if (m == -1) {
+            for (int g = 6 * n; g < 6 * n + 6; ++g)
+                if (free_index[g] >= 0) tt.emplace_back(g, free_index[g], 1.0);
+            continue;
+        }
+        const Eigen::Vector3d r = (in.nodes.row(n) - in.nodes.row(m)).transpose();
+        const int bm = 6 * m, bs = 6 * n;
+        for (int d = 0; d < 3; ++d) add_term(bs + d, bm + d, 1.0);  // translation
+        add_term(bs + 0, bm + 4, r.z());   // ux += ry*rz - rz*ry
+        add_term(bs + 0, bm + 5, -r.y());
+        add_term(bs + 1, bm + 5, r.x());   // uy += rz*rx - rx*rz
+        add_term(bs + 1, bm + 3, -r.z());
+        add_term(bs + 2, bm + 3, r.y());   // uz += rx*ry - ry*rx
+        add_term(bs + 2, bm + 4, -r.x());
+        for (int d = 3; d < 6; ++d) add_term(bs + d, bm + d, 1.0);  // rotation
+    }
+    Eigen::SparseMatrix<double> Tm(n_dof, n_free);
+    Tm.setFromTriplets(tt.begin(), tt.end());
+
+    std::vector<int> slave_bcs;
+    for (int g = 0; g < n_dof; ++g)
+        if (has_bc[g] && master[g / 6] != -1) slave_bcs.push_back(g);
+
+    Eigen::VectorXd F = Eigen::VectorXd::Zero(n_dof);
     for (const auto& ld : in.loads) {
         if (ld.node < 0 || ld.node >= n_nodes || ld.dof < 0 || ld.dof > 5) {
             throw std::runtime_error("Load references invalid node/dof");
@@ -301,11 +371,47 @@ inline FemResult solve_frame(const FemInput& in) {
 
     Eigen::SparseMatrix<double> K(n_dof, n_dof);
     K.setFromTriplets(trip.begin(), trip.end());
-    Eigen::SparseLU<Eigen::SparseMatrix<double>> solver;
-    solver.compute(K);
-    if (solver.info() != Eigen::Success) throw std::runtime_error("Sparse LU decomposition failed");
-    res.U = solver.solve(F);
-    if (solver.info() != Eigen::Success) throw std::runtime_error("Linear solve failed");
+    const Eigen::SparseMatrix<double> TmT = Tm.transpose();
+    const Eigen::SparseMatrix<double> Kr = TmT * K * Tm;
+    const Eigen::VectorXd Fr = TmT * (F - K * u_p);
+
+    const int n_c = static_cast<int>(slave_bcs.size());
+    std::vector<Eigen::Triplet<double>> at;
+    for (int k = 0; k < Kr.outerSize(); ++k)
+        for (Eigen::SparseMatrix<double>::InnerIterator it(Kr, k); it; ++it) at.emplace_back(it.row(), it.col(), it.value());
+    Eigen::VectorXd rhs(n_free + n_c);
+    rhs.head(n_free) = Fr;
+    const Eigen::SparseMatrix<double, Eigen::RowMajor> TmR = Tm;
+    for (int c = 0; c < n_c; ++c) {
+        const int g = slave_bcs[c];
+        for (Eigen::SparseMatrix<double, Eigen::RowMajor>::InnerIterator it(TmR, g); it; ++it) {
+            at.emplace_back(n_free + c, it.col(), it.value());
+            at.emplace_back(it.col(), n_free + c, it.value());
+        }
+        rhs(n_free + c) = bc_value(g) - u_p(g);
+    }
+    Eigen::SparseMatrix<double> A(n_free + n_c, n_free + n_c);
+    A.setFromTriplets(at.begin(), at.end());
+
+    res.U = u_p;
+    if (n_free + n_c > 0) {
+        Eigen::VectorXd x;
+        Eigen::SparseLU<Eigen::SparseMatrix<double>> lu;
+        lu.compute(A);
+        if (lu.info() == Eigen::Success) x = lu.solve(rhs);
+        if (lu.info() != Eigen::Success || !x.allFinite()) {
+            // Redundant slave BCs (several pinned nodes on one rigid body) make the multiplier
+            // block rank-deficient; rank-revealing QR still solves the consistent system.
+            A.makeCompressed();
+            Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int>> qr(A);
+            if (qr.info() == Eigen::Success) x = qr.solve(rhs);
+            if (qr.info() != Eigen::Success || !x.allFinite() ||
+                (A * x - rhs).norm() > 1e-8 * std::max(rhs.norm(), 1.0)) {
+                throw std::runtime_error("Singular stiffness: mechanism or insufficient supports");
+            }
+        }
+        res.U += Tm * x.head(n_free);
+    }
 
     res.K_torsion = compute_torsional_rigidity(in.nodes, res.U, in.loads);
     compute_element_stresses(in.elements, res.U, res);
@@ -334,6 +440,11 @@ Json solve_json(const Json& input) {
     };
     read_triples("bcs", in.bcs);
     read_triples("loads", in.loads);
+    if (input.contains("rigid_links")) {
+        for (const auto& r : input.at("rigid_links")) {
+            in.rigid_links.emplace_back(r[0].template get<int>() - 1, r[1].template get<int>() - 1);
+        }
+    }
 
     const FemResult res = solve_frame(in);
     Json out;

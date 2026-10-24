@@ -13,7 +13,7 @@
  *              Mx9 (Phi = 0, Euler-Bernoulli, with a warning) are accepted.
  *   bcs      - Bx3 double [node_id, dof, value], dof 1-6 (ux, uy, uz, rx, ry, rz)
  *   loads    - Lx3 double [node_id, dof, value], dof 1-6 (Fx, Fy, Fz, Mx, My, Mz)
- *   options  - struct (optional, currently unused)
+ *   options  - struct (optional): .rigid_links Rx2 [master, slave] node ids (RBE2)
  *
  * Output struct: U (Nx6), K_torsion [Nm/deg], mass [kg], success,
  *   element_forces (Mx12, local end forces at the flexible ends [Fx Fy Fz Mx My Mz]_i,_j in N, N*m),
@@ -78,6 +78,14 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
         }
         in.bcs = read_triples(prhs[2]);
         in.loads = read_triples(prhs[3]);
+        const mxArray* links = nrhs == 5 && mxIsStruct(prhs[4]) ? mxGetField(prhs[4], 0, "rigid_links") : nullptr;
+        if (links && !mxIsEmpty(links)) {
+            if (!mxIsDouble(links) || mxGetN(links) != 2) throw std::runtime_error("options.rigid_links must be Rx2");
+            const double* lp = mxGetPr(links);
+            const mwSize nl = mxGetM(links);
+            for (mwSize k = 0; k < nl; ++k)
+                in.rigid_links.emplace_back(static_cast<int>(lp[k]) - 1, static_cast<int>(lp[k + nl]) - 1);
+        }
         res = fo::solve_frame(in);
     } catch (const std::exception& ex) {
         mexErrMsgIdAndTxt("beamFEM:SolverFailed", "%s", ex.what());

@@ -53,4 +53,10 @@ assert(isequal(size(r.element_forces), [1 12]), 'element_forces must be Mx12');
 r = beam_fem_solver(nodes, row(1, 2), clamp, [2 2 -P]);
 assert(abs(r.buckling_ratio - P/(pi^2*E*1e9*I/L^2)) / r.buckling_ratio < 1e-9, 'Euler buckling ratio');
 
+% 4. Rigid link (#52): load on a slave offset e from the tip twists it by P e L / (G J)
+e = 0.1;
+nodes = [0 0 0; L 0 0; L e 0];
+r = beam_fem_solver(nodes, row(1, 2), clamp, [3 3 P], struct('rigid_links', [2 3]));
+assert(abs(r.U(2, 4) - P*e*L/(G*1e9*J)) / (P*e*L/(G*1e9*J)) < 1e-9, 'Rigid link twist');
+
 fprintf('Beam FEM closed-form benchmarks OK\n');
