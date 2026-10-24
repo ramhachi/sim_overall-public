@@ -113,7 +113,7 @@ void computeSectionProperties(BeamElement &elem) {
         elem.Iy = (pow(D,4) - pow(D_inner,4)) / 12.0;
         elem.Iz = elem.Iy;
         double b = D - t_val;
-        elem.J = 2 * t_val * pow(b,3) / (1 + 0.63 * t_val / b);
+        elem.J = pow(b,3) * t_val;  // Bredt: 4 A_m^2 t / s, A_m = b^2, s = 4b (sharp corners)
     } else {
         throw std::runtime_error("Shape must be 1 (round) or 2 (square)");
     }
