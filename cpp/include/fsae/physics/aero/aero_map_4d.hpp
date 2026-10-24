@@ -42,7 +42,6 @@ struct AeroOutput {
     Scalar CL = 0;      // リフト係数（負=ダウンフォース）
     Scalar CD = 0;      // ドラッグ係数
     Scalar CY = 0;      // サイドフォース係数
-    Scalar Cm = 0;      // ピッチングモーメント係数（鉛直力分のみ）
     Scalar CoP_x = 0;   // 鉛直力の圧力中心 X [m from rear axle]（前輪配分 = CoP_x / L_ref）
     Scalar CoP_y_x = 0; // 横力の圧力中心 X [m from rear axle]
     std::uint8_t out_of_domain = 0;  // 域外ビット（bit0 RHf, bit1 RHr, bit2 roll, bit3 yaw）
@@ -160,7 +159,6 @@ public:
             out.CD *= params_.drs_CD_ratio;
         }
 
-        out.Cm = out.CL * (out.CoP_x - params_.x_cg) / params_.L_ref;
         return out;
     }
 

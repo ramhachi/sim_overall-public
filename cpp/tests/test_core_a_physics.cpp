@@ -365,6 +365,69 @@ TEST(CoreA_Tire, CamberedVerticalLoadProjectsToBodyPlane) {
     EXPECT_GT(std::abs(fy_tilted - fy_flat), 10.0);
 }
 
+// #7: angle-mode steering is clamped by steering.max_angle.
+TEST(CoreA_Params, AngleModeClampsToMaxAngle) {
+    VehicleParams p = VehicleParams::default_fsae();
+    p.steering.torque_mode = false;
+    p.steering.max_angle = 0.2;
+    Vehicle14DOF_New limited(p), over(p);
+    limited.set_initial_velocity(10.0);
+    over.set_initial_velocity(10.0);
+    DriverInput a, b;
+    a.gear = 0;
+    b.gear = 0;
+    a.steering = 0.2;
+    b.steering = 1.0;
+    for (int k = 0; k < 100; ++k) {
+        limited.step(0.001, a);
+        over.step(0.001, b);
+    }
+    EXPECT_NEAR(limited.state().r, over.state().r, 1e-12);
+}
+
+// #7: load compliance moves the contact patch; caster compliance changes kingpin torque.
+TEST(CoreA_Params, LoadComplianceIsConsumed) {
+    auto run_track = [](double track_per_fz) {
+        VehicleParams p = VehicleParams::default_fsae();
+        p.suspension.kc_corners[0].compliance.track_per_load[2] = track_per_fz;
+        Vehicle14DOF_New veh(p);
+        veh.set_initial_velocity(15.0);
+        DriverInput in;
+        in.gear = 0;
+        in.steering = 0.03;
+        for (int k = 0; k < 200; ++k) veh.step(0.001, in);
+        return veh.get_tire_Fx_body()[0];
+    };
+    EXPECT_GT(std::abs(run_track(1e-3) - run_track(0.0)), 1e-3);
+
+    auto run_wheelbase = [](double wheelbase_per_fz) {
+        VehicleParams p = VehicleParams::default_fsae();
+        p.suspension.kc_corners[0].compliance.wheelbase_per_load[2] = wheelbase_per_fz;
+        Vehicle14DOF_New veh(p);
+        veh.set_initial_velocity(15.0);
+        DriverInput in;
+        in.gear = 0;
+        in.steering = 0.03;
+        for (int k = 0; k < 200; ++k) veh.step(0.001, in);
+        return veh.get_tire_Fy_body()[0];
+    };
+    EXPECT_GT(std::abs(run_wheelbase(1e-3) - run_wheelbase(0.0)), 1e-3);
+
+    auto run_caster = [](double caster_per_fz) {
+        VehicleParams p = VehicleParams::default_fsae();
+        p.suspension.kc_corners[0].mechanical_trail = 0.03;
+        p.suspension.kc_corners[0].compliance.caster_per_load[2] = caster_per_fz;
+        Vehicle14DOF_New veh(p);
+        veh.set_initial_velocity(15.0);
+        DriverInput in;
+        in.gear = 0;
+        in.steering = 0.03;
+        for (int k = 0; k < 200; ++k) veh.step(0.001, in);
+        return veh.get_kingpin_torque()[0];
+    };
+    EXPECT_GT(std::abs(run_caster(1e-3) - run_caster(0.0)), 1e-6);
+}
+
 namespace {
 State14DOF run_bumpy(const VehicleParams& p) {
     Vehicle14DOF_New veh(p);

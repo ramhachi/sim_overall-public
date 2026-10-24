@@ -289,18 +289,17 @@ public:
         bool lugre_stiff = (params_.suspension.lugre_sigma0 > 2000.0);
 
         // 適応的タイムステップ決定
-        double dt_effective = dt;
         int substeps = 1;
-
         if (bumpstop_contact) {
             // バンプストップ接触: dt を 1/5 に短縮
-            dt_effective = dt / 5.0;
             substeps = 5;
         } else if (lugre_stiff) {
             // LuGre高剛性: dt を 1/2 に短縮
-            dt_effective = dt / 2.0;
             substeps = 2;
         }
+        // Explicit substep override (#7).
+        substeps = std::max(substeps, std::max(1, sp.lugre_substeps));
+        const double dt_effective = dt / substeps;
 
         // サブステップ積分
         for (int i = 0; i < substeps; ++i) {
@@ -1313,8 +1312,9 @@ private:
             // トルクモード: ステアリングホイール角から変換
             delta_driver = steering_wheel_to_tire_angle(state.delta_sw, params_.steering.R_steer);
         } else {
-            // 角度モード（後方互換性）: 直接入力
-            delta_driver = input.steering;
+            // 角度モード（後方互換性）: max_angle でクランプ（#7）
+            delta_driver = std::clamp(input.steering, -params_.steering.max_angle,
+                                      params_.steering.max_angle);
         }
 
         // 前ステップの Mz を初期値にし、K&C fixed-point ループ内で当該 stage の Mz で更新（#6: 1 step lag 解消）
@@ -1418,16 +1418,6 @@ private:
             // タイヤ滑り計算（完全な座標変換）
             // ガイド §2.4: 車体系 → サスペンション系 → ホイール系 → タイヤ接地点系
 
-            // 1. 車体系での接触点速度（CGからのオフセット考慮）
-            const Eigen::Vector3d contact_position(
-                wheel_pos[i].x(), wheel_pos[i].y(), params_.mass.h_cg);
-            const Eigen::Vector3d contact_velocity = compute_contact_patch_velocity(
-                Eigen::Vector3d(state.vx, state.vy, state.vz),
-                Eigen::Vector3d(state.p, state.q, state.r),
-                contact_position);
-            double vx_contact = contact_velocity.x();
-            double vy_contact = contact_velocity.y();
-
             // 2. K&C load coupling は各 RK4 stage の trial state に閉じるよう
             //    wheel ごとに簡易 fixed-point を 2 回だけ回す
             const double axle_roll_angle = (i < 2) ? phi_front : phi_rear;
@@ -1445,6 +1435,24 @@ private:
                 // POU pushrod-length change (#38); springs keep effective_*.
                 camber = compute_camber_angle(i, susp_travel_from_eq, steer[i], axle_roll_angle, kc_loads);
                 toe = compute_toe_angle(i, susp_travel_from_eq, steer[i], axle_roll_angle, kc_loads);
+
+                // Load compliance moves the contact patch (#7). track_per_load is the
+                // per-corner track change; mirror it to the wheel's side.
+                double track_delta = 0.0, wheelbase_delta = 0.0;
+                for (int k = 0; k < 6; ++k) {
+                    track_delta += params_.suspension.kc_corners[i].compliance.track_per_load[k] * kc_loads[k];
+                    wheelbase_delta += params_.suspension.kc_corners[i].compliance.wheelbase_per_load[k] * kc_loads[k];
+                }
+                const Eigen::Vector3d contact_position(
+                    wheel_pos[i].x() + wheelbase_delta,
+                    wheel_pos[i].y() + std::copysign(1.0, wheel_pos[i].y()) * track_delta,
+                    params_.mass.h_cg);
+                const Eigen::Vector3d contact_velocity = compute_contact_patch_velocity(
+                    Eigen::Vector3d(state.vx, state.vy, state.vz),
+                    Eigen::Vector3d(state.p, state.q, state.r),
+                    contact_position);
+                const double vx_contact = contact_velocity.x();
+                const double vy_contact = contact_velocity.y();
 
                 // POUによるキャンバー変化を保存（デバッグ用: 総キャンバーから静的分を引く）
                 double static_camber_component = params_.suspension.static_camber[i]
@@ -1858,9 +1866,16 @@ private:
         std::array<double, 2> T_kingpin{};
         for (int i = 0; i < 2; ++i) {
             const auto& kc = params_.suspension.kc_corners[i];
+            const std::array<double, 6> loads = {
+                tire_Fx_stage[i], tire_Fy_stage[i], Fz_tire[i],
+                tire_Mx_stage[i], 0.0, tire_Mz_stage[i]};
+            double caster = kc.caster;
+            for (int k = 0; k < 6; ++k) {
+                caster += kc.compliance.caster_per_load[k] * loads[k];  // #7
+            }
             T_kingpin[i] = compute_kingpin_torque(
                 tire_Mz_stage[i], tire_Fx_stage[i], tire_Fy_stage[i],
-                kc.mechanical_trail, kc.caster, kc.scrub_radius,
+                kc.mechanical_trail, caster, kc.scrub_radius,
                 std::copysign(1.0, wheel_pos[i].y())) + T_gyro_kingpin[i];
         }
         if (update_cache) kingpin_torque_ = T_kingpin;

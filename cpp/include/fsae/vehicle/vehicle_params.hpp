@@ -187,8 +187,6 @@ struct SuspensionParams {
         KinematicSurrogate kinematics;
         ComplianceSurrogate compliance;
         double caster = 0.0;           // [rad]
-        double kpi = 0.0;              // [rad]
-        double sai = 0.0;              // [rad]
         double scrub_radius = 0.0;     // [m]
         double mechanical_trail = 0.0; // [m]
         double caster_trail = 0.0;     // [m]
@@ -197,13 +195,10 @@ struct SuspensionParams {
 
     struct KCAxleParams {
         double roll_center_height = 0.0;         // [m]
-        double roll_center_lateral = 0.0;        // [m]
         double roll_center_height_per_travel = 0.0; // [m/m]
         double roll_center_height_per_roll = 0.0;   // [m/rad]
         double anti_brake_pct = 0.0;             // [0-1]
         double anti_drive_pct = 0.0;             // [0-1]
-        double anti_lift_pct = 0.0;              // [0-1]
-        double anti_rise_pct = 0.0;              // [0-1]
         double arb_motion_ratio = 1.0;           // [-]
     };
 
@@ -266,7 +261,6 @@ struct TireParams {
 
 /// ステアリングパラメータ
 struct SteeringParams {
-    double rack_ratio = 0.05;        // ラック変位/ステアリング角 [m/rad]
     double ackermann = 0.7;          // アッカーマン率 (0-1)
     double max_angle = 0.52;         // 最大舵角 [rad] (~30deg)
     double stiffness = 5000.0;       // ステアリング系回転剛性 K_steer [Nm/rad]
@@ -300,11 +294,11 @@ struct PowertrainParams {
     double I_engine = 0.0;          // クランク軸まわり慣性 [kg·m²]
     double I_gearbox = 0.0;         // ミッション出力軸まわり慣性 [kg·m²]
     double shift_time_s = 0.0;      // 変速中の駆動トルク遮断時間 [s]
-    
-    // 後方互換性のため残す（非推奨）
+
+    // Legacy 3/6/8DOF models (not the 14DOF path)
     double max_torque = 63.0;       // 最大エンジントルク [Nm]
     double gear_ratio = 3.0;        // 総減速比（旧形式）
-    
+
     // LSD（Salisbury式）パラメータ
     double lsd_preload = 40.0;           // プリロードトルク [Nm] (20-80)
     double lsd_ramp_accel = 35.0;        // 加速側ランプ角 [deg] (30-45: 小→ロック強)
@@ -346,7 +340,6 @@ struct AeroParams {
     double nominal_rear_ride_height_mm = 55.0;
     double nominal_roll_rad = 0.0;
     double nominal_yaw_rad = 0.0;
-    double nominal_steer_rad = 0.0;
     double Fx_ref_total = -80.0;            // [N] at Vref
     double Fy_ref_total = 0.0;              // [N] at Vref
     double Fz_ref_total = -350.0;           // [N] at Vref
@@ -513,7 +506,6 @@ struct VehicleParams {
 
                 auto parse_axle = [](const nlohmann::json& src, SuspensionParams::KCAxleParams& dst) {
                     if (src.contains("roll_center_height")) dst.roll_center_height = src["roll_center_height"];
-                    if (src.contains("roll_center_lateral")) dst.roll_center_lateral = src["roll_center_lateral"];
                     if (src.contains("roll_center_height_per_travel")) {
                         dst.roll_center_height_per_travel = src["roll_center_height_per_travel"];
                     }
@@ -522,8 +514,6 @@ struct VehicleParams {
                     }
                     if (src.contains("anti_brake_pct")) dst.anti_brake_pct = src["anti_brake_pct"];
                     if (src.contains("anti_drive_pct")) dst.anti_drive_pct = src["anti_drive_pct"];
-                    if (src.contains("anti_lift_pct")) dst.anti_lift_pct = src["anti_lift_pct"];
-                    if (src.contains("anti_rise_pct")) dst.anti_rise_pct = src["anti_rise_pct"];
                     if (src.contains("arb_motion_ratio")) dst.arb_motion_ratio = src["arb_motion_ratio"];
                 };
 
@@ -539,8 +529,6 @@ struct VehicleParams {
                         auto& dst = p.suspension.kc_corners[i];
 
                         if (src.contains("caster")) dst.caster = src["caster"];
-                        if (src.contains("kpi")) dst.kpi = src["kpi"];
-                        if (src.contains("sai")) dst.sai = src["sai"];
                         if (src.contains("scrub_radius")) dst.scrub_radius = src["scrub_radius"];
                         if (src.contains("mechanical_trail")) dst.mechanical_trail = src["mechanical_trail"];
                         if (src.contains("caster_trail")) dst.caster_trail = src["caster_trail"];
@@ -677,7 +665,6 @@ struct VehicleParams {
         // ステアリング
         if (config.contains("steering")) {
             auto& st = config["steering"];
-            if (st.contains("rack_ratio")) p.steering.rack_ratio = st["rack_ratio"];
             if (st.contains("ackermann")) p.steering.ackermann = st["ackermann"];
             if (st.contains("max_angle")) p.steering.max_angle = st["max_angle"];
             if (st.contains("stiffness")) p.steering.stiffness = st["stiffness"];
@@ -709,9 +696,9 @@ struct VehicleParams {
             if (pt.contains("efficiency")) p.powertrain.efficiency = pt["efficiency"];
             if (pt.contains("I_engine")) p.powertrain.I_engine = pt["I_engine"];
             if (pt.contains("I_gearbox")) p.powertrain.I_gearbox = pt["I_gearbox"];
-            if (pt.contains("shift_time_s")) p.powertrain.shift_time_s = pt["shift_time_s"];
             if (pt.contains("max_torque")) p.powertrain.max_torque = pt["max_torque"];
             if (pt.contains("gear_ratio")) p.powertrain.gear_ratio = pt["gear_ratio"];
+            if (pt.contains("shift_time_s")) p.powertrain.shift_time_s = pt["shift_time_s"];
             if (pt.contains("lsd_preload")) p.powertrain.lsd_preload = pt["lsd_preload"];
             if (pt.contains("lsd_ramp_accel")) p.powertrain.lsd_ramp_accel = pt["lsd_ramp_accel"];
             if (pt.contains("lsd_ramp_decel")) p.powertrain.lsd_ramp_decel = pt["lsd_ramp_decel"];
@@ -750,7 +737,6 @@ struct VehicleParams {
             if (a.contains("nominal_rear_ride_height_mm")) p.aero.nominal_rear_ride_height_mm = a["nominal_rear_ride_height_mm"];
             if (a.contains("nominal_roll_rad")) p.aero.nominal_roll_rad = a["nominal_roll_rad"];
             if (a.contains("nominal_yaw_rad")) p.aero.nominal_yaw_rad = a["nominal_yaw_rad"];
-            if (a.contains("nominal_steer_rad")) p.aero.nominal_steer_rad = a["nominal_steer_rad"];
             if (a.contains("Fx_ref_total")) p.aero.Fx_ref_total = a["Fx_ref_total"];
             if (a.contains("Fy_ref_total")) p.aero.Fy_ref_total = a["Fy_ref_total"];
             if (a.contains("Fz_ref_total")) p.aero.Fz_ref_total = a["Fz_ref_total"];
