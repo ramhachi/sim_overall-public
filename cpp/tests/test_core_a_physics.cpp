@@ -428,6 +428,48 @@ TEST(CoreA_Params, LoadComplianceIsConsumed) {
     EXPECT_GT(std::abs(run_caster(1e-3) - run_caster(0.0)), 1e-6);
 }
 
+// #8: dense K&C samples are parsed and take precedence over the quadratic surrogate.
+TEST(CoreA_KC, DenseSamplesTakePrecedenceOverQuadratic) {
+    VehicleParams p = VehicleParams::default_fsae();
+    auto& kc = p.suspension.kc_corners[0];
+    kc.valid = true;
+    kc.kinematics.camber_vs_travel = {0.5, 0.0, 0.0};  // misleading surrogate
+    kc.kinematics.toe_vs_travel = {0.5, 0.0, 0.0};
+    kc.samples.travel_m.clear();
+    kc.samples.camber_rad.clear();
+    kc.samples.toe_rad.clear();
+    for (int mm = -30; mm <= 30; mm += 5) {
+        const double x = 0.001 * mm;
+        kc.samples.travel_m.push_back(x);
+        kc.samples.camber_rad.push_back(-0.02 + 0.5 * x + 40.0 * x * x);
+        kc.samples.toe_rad.push_back(0.001 + 0.1 * x);
+    }
+    Vehicle14DOF_New veh(p);
+    const std::array<double, 6> loads = {0, 0, 0, 0, 0, 0};
+    EXPECT_NEAR(veh.compute_camber_angle(0, 0.01, 0.0, 0.0, loads),
+                -0.02 + 0.005 + 40.0 * 1e-4, 1e-12);
+    EXPECT_NEAR(veh.compute_toe_angle(0, 0.01, 0.0, 0.0, loads), 0.001 + 0.001, 1e-12);
+    // Mid-knot interpolation stays within 0.05 deg of the generating quadratic.
+    for (double x = -0.025; x <= 0.025; x += 0.001) {
+        const double expected = -0.02 + 0.5 * x + 40.0 * x * x;
+        EXPECT_NEAR(veh.compute_camber_angle(0, x, 0.0, 0.0, loads), expected, 8.7e-4);
+    }
+}
+
+TEST(CoreA_KC, DenseSamplesJsonParsing) {
+    const auto p = VehicleParams::from_json_string(R"({
+        "suspension": {"kc": {"corners": {"FL": {"sample_values": {
+            "travel_m": [-0.01, 0.0, 0.01],
+            "camber_rad": [-0.1, 0.0, 0.1],
+            "steer_rad": [-0.2, 0.2],
+            "steer_camber_rad": [-0.01, 0.01]
+        }}}}}
+    })");
+    EXPECT_EQ(p.suspension.kc_corners[0].samples.travel_m.size(), 3u);
+    EXPECT_EQ(p.suspension.kc_corners[0].samples.camber_rad.size(), 3u);
+    EXPECT_EQ(p.suspension.kc_corners[0].samples.steer_camber_rad.size(), 2u);
+}
+
 namespace {
 State14DOF run_bumpy(const VehicleParams& p) {
     Vehicle14DOF_New veh(p);

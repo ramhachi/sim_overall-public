@@ -407,22 +407,36 @@ public:
         double axle_roll_angle,
         const std::array<double, 6>& kc_loads) const {
         const auto& kc = params_.suspension.kc_corners[wheel_index];
+        const auto& sv = kc.samples;
+        const bool has_travel_lut = kc.valid && sv.travel_m.size() >= 2
+            && sv.camber_rad.size() == sv.travel_m.size();
+        const bool has_steer_lut = kc.valid && sv.steer_rad.size() >= 2
+            && sv.steer_camber_rad.size() == sv.steer_rad.size();
+        const bool has_roll_lut = kc.valid && sv.roll_rad.size() >= 2
+            && sv.roll_camber_residual_rad.size() == sv.roll_rad.size();
         const bool kc_owns_steer_camber = kc.valid
-            && !is_zero_polynomial(kc.kinematics.camber_vs_steer);
+            && (has_steer_lut || !is_zero_polynomial(kc.kinematics.camber_vs_steer));
         double camber = params_.suspension.static_camber[wheel_index];
         if (kc.valid) {
-            if (is_zero_polynomial(kc.kinematics.camber_vs_travel)) {
+            if (has_travel_lut) {
+                camber = lut_eval(sv.travel_m, sv.camber_rad, susp_travel_from_eq, camber);
+            } else if (is_zero_polynomial(kc.kinematics.camber_vs_travel)) {
                 camber += params_.suspension.camber_gain[wheel_index] * susp_travel_from_eq;
             } else {
                 camber = eval_quadratic(kc.kinematics.camber_vs_travel, susp_travel_from_eq);
             }
-            if (kc_owns_steer_camber) {
+            if (has_steer_lut) {
+                camber += lut_eval(sv.steer_rad, sv.steer_camber_rad, steer_angle, 0.0);
+            } else if (kc_owns_steer_camber) {
                 camber += eval_quadratic(kc.kinematics.camber_vs_steer, steer_angle);
             }
             // camber_vs_travel already sees the roll-induced +-t/2*phi travel, so the
-            // roll gain is applied only without it (#38). Exporters must define
-            // roll_camber_gain as the residual camber(phi) - camber_vs_travel(travel(phi)).
-            if (is_zero_polynomial(kc.kinematics.camber_vs_travel)) {
+            // roll term is applied only without it (#38). Dense roll residuals are
+            // zero-referenced to avoid a static offset.
+            if (has_roll_lut) {
+                camber += lut_eval(sv.roll_rad, sv.roll_camber_residual_rad, axle_roll_angle, 0.0)
+                        - lut_eval(sv.roll_rad, sv.roll_camber_residual_rad, 0.0, 0.0);
+            } else if (!has_travel_lut && is_zero_polynomial(kc.kinematics.camber_vs_travel)) {
                 camber += kc.kinematics.roll_camber_gain * axle_roll_angle;
             }
 
@@ -1134,15 +1148,29 @@ public:
         const std::array<double, 6>& kc_loads) const {
         double toe = params_.suspension.static_toe[wheel_index];
         const auto& kc = params_.suspension.kc_corners[wheel_index];
+        const auto& sv = kc.samples;
+        const bool has_travel_lut = kc.valid && sv.travel_m.size() >= 2
+            && sv.toe_rad.size() == sv.travel_m.size();
+        const bool has_steer_lut = kc.valid && sv.steer_rad.size() >= 2
+            && sv.steer_toe_rad.size() == sv.steer_rad.size();
+        const bool has_roll_lut = kc.valid && sv.roll_rad.size() >= 2
+            && sv.roll_toe_residual_rad.size() == sv.roll_rad.size();
         if (kc.valid) {
-            if (is_zero_polynomial(kc.kinematics.toe_vs_travel)) {
-                // fallback to legacy static toe only
-            } else {
+            if (has_travel_lut) {
+                toe = lut_eval(sv.travel_m, sv.toe_rad, susp_travel_from_eq, toe);
+            } else if (!is_zero_polynomial(kc.kinematics.toe_vs_travel)) {
                 toe = eval_quadratic(kc.kinematics.toe_vs_travel, susp_travel_from_eq);
             }
-            toe += eval_quadratic(kc.kinematics.toe_vs_steer, steer_angle);
+            if (has_steer_lut) {
+                toe += lut_eval(sv.steer_rad, sv.steer_toe_rad, steer_angle, 0.0);
+            } else {
+                toe += eval_quadratic(kc.kinematics.toe_vs_steer, steer_angle);
+            }
             // Same residual rule as roll_camber_gain (#38).
-            if (is_zero_polynomial(kc.kinematics.toe_vs_travel)) {
+            if (has_roll_lut) {
+                toe += lut_eval(sv.roll_rad, sv.roll_toe_residual_rad, axle_roll_angle, 0.0)
+                     - lut_eval(sv.roll_rad, sv.roll_toe_residual_rad, 0.0, 0.0);
+            } else if (!has_travel_lut && is_zero_polynomial(kc.kinematics.toe_vs_travel)) {
                 toe += kc.kinematics.roll_steer_gain * axle_roll_angle;
             }
 
@@ -1158,6 +1186,13 @@ public:
         return compute_toe_angle(wheel_index, 0.0, 0.0, 0.0, zero_loads);
     }
 private:
+
+    /// Clamped linear interpolation; returns fallback when the table is absent.
+    double lut_eval(const std::vector<double>& x, const std::vector<double>& y,
+                    double q, double fallback) const {
+        if (x.size() < 2 || x.size() != y.size()) return fallback;
+        return interp1_clamped(x, y, q, fallback);
+    }
 
     double compute_effective_relaxation_length(bool longitudinal, double fz, double tire_temp_c) const {
         const auto& relax = params_.tire.relaxation;
@@ -1176,6 +1211,18 @@ private:
 
     double compute_roll_center_height_for_wheel(int wheel_index, const std::array<double, 4>& susp_travel_from_eq, double body_roll_angle) const {
         const auto& axle = (wheel_index < 2) ? params_.suspension.kc_front : params_.suspension.kc_rear;
+        const auto& sv = params_.suspension.kc_corners[wheel_index].samples;
+        if (sv.travel_m.size() >= 2 && sv.rc_height_m.size() == sv.travel_m.size()) {
+            double h = lut_eval(sv.travel_m, sv.rc_height_m,
+                                susp_travel_from_eq[wheel_index], axle.roll_center_height);
+            if (sv.roll_rad.size() >= 2 && sv.roll_center_height_m.size() == sv.roll_rad.size()) {
+                h += lut_eval(sv.roll_rad, sv.roll_center_height_m, body_roll_angle, 0.0)
+                   - lut_eval(sv.roll_rad, sv.roll_center_height_m, 0.0, 0.0);
+            } else {
+                h += axle.roll_center_height_per_roll * body_roll_angle;
+            }
+            return h;
+        }
         const double axle_travel = (wheel_index < 2)
             ? 0.5 * (susp_travel_from_eq[FL] + susp_travel_from_eq[FR])
             : 0.5 * (susp_travel_from_eq[RL] + susp_travel_from_eq[RR]);
@@ -1198,17 +1245,26 @@ private:
                               double axle_roll_angle) const {
         const bool front = i < 2;
         const auto& kc = params_.suspension.kc_corners[i];
+        const auto& sv = kc.samples;
         const auto& axle = front ? params_.suspension.kc_front : params_.suspension.kc_rear;
         double k_jack = (kc.valid && kc.kinematics.jacking_force_per_fy != 0.0)
             ? kc.kinematics.jacking_force_per_fy
             : 0.0;
-        if (k_jack == 0.0 && axle.roll_center_height != 0.0) {
+        if (sv.travel_m.size() >= 2 && sv.jacking_force_per_fy.size() == sv.travel_m.size()) {
+            k_jack = lut_eval(sv.travel_m, sv.jacking_force_per_fy,
+                              susp_travel_from_eq[i], k_jack);
+        } else if (k_jack == 0.0 && axle.roll_center_height != 0.0) {
             // ponytail: linear RC migration, swap for RCz(heave, roll) LUT from the K&C sweep.
             const double half_track = 0.5 * (front ? params_.mass.track_f : params_.mass.track_r);
             const double h_rc = compute_roll_center_height_for_wheel(i, susp_travel_from_eq, axle_roll_angle);
             k_jack = -std::copysign(1.0, wheel_positions_[i].y()) * h_rc / half_track;
         }
-        const double anti = std::clamp(fx_body >= 0.0 ? axle.anti_drive_pct : axle.anti_brake_pct, 0.0, 1.0);
+        double anti = fx_body >= 0.0 ? axle.anti_drive_pct : axle.anti_brake_pct;
+        const auto& anti_lut = fx_body >= 0.0 ? sv.anti_drive : sv.anti_brake;
+        if (sv.travel_m.size() >= 2 && anti_lut.size() == sv.travel_m.size()) {
+            anti = lut_eval(sv.travel_m, anti_lut, susp_travel_from_eq[i], anti);
+        }
+        anti = std::clamp(anti, 0.0, 1.0);
         const double L = params_.mass.a + params_.mass.b;
         const double f_anti = (front ? -1.0 : 1.0) * fx_body * anti * params_.mass.h_cg / L;
         return k_jack * fy_body + f_anti;
@@ -1442,6 +1498,12 @@ private:
                 for (int k = 0; k < 6; ++k) {
                     track_delta += params_.suspension.kc_corners[i].compliance.track_per_load[k] * kc_loads[k];
                     wheelbase_delta += params_.suspension.kc_corners[i].compliance.wheelbase_per_load[k] * kc_loads[k];
+                }
+                const auto& corner_samples = params_.suspension.kc_corners[i].samples;
+                if (corner_samples.travel_m.size() >= 2
+                    && corner_samples.track_change_m.size() == corner_samples.travel_m.size()) {
+                    track_delta += lut_eval(corner_samples.travel_m, corner_samples.track_change_m,
+                                            susp_travel_from_eq, 0.0);
                 }
                 const Eigen::Vector3d contact_position(
                     wheel_pos[i].x() + wheelbase_delta,
@@ -1870,6 +1932,12 @@ private:
                 tire_Fx_stage[i], tire_Fy_stage[i], Fz_tire[i],
                 tire_Mx_stage[i], 0.0, tire_Mz_stage[i]};
             double caster = kc.caster;
+            const auto& corner_samples = kc.samples;
+            if (corner_samples.travel_m.size() >= 2
+                && corner_samples.caster_rad.size() == corner_samples.travel_m.size()) {
+                caster = lut_eval(corner_samples.travel_m, corner_samples.caster_rad,
+                                  susp_travel_from_eq_arr[i], caster);
+            }
             for (int k = 0; k < 6; ++k) {
                 caster += kc.compliance.caster_per_load[k] * loads[k];  // #7
             }

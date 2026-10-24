@@ -183,9 +183,22 @@ struct SuspensionParams {
             std::array<double, 6> wheelbase_per_load = {0, 0, 0, 0, 0, 0}; // Fx,Fy,Fz,Mx,My,Mz -> wheelbase change [m/unit]
         };
 
+        /// Dense K&C sweep tables (#8). All lengths are SI; empty = use the
+        /// quadratic surrogate (legacy artifacts).
+        struct KinematicSamples {
+            std::vector<double> travel_m;
+            std::vector<double> camber_rad, toe_rad, caster_rad, kpi_rad;
+            std::vector<double> track_change_m, rc_height_m, jacking_force_per_fy;
+            std::vector<double> anti_brake, anti_drive;
+            std::vector<double> roll_rad, roll_camber_residual_rad, roll_toe_residual_rad,
+                roll_center_height_m;
+            std::vector<double> steer_rad, steer_rack_m, steer_camber_rad, steer_toe_rad;
+        };
+
         Hardpoints hardpoints;
         KinematicSurrogate kinematics;
         ComplianceSurrogate compliance;
+        KinematicSamples samples;
         double caster = 0.0;           // [rad]
         double scrub_radius = 0.0;     // [m]
         double mechanical_trail = 0.0; // [m]
@@ -551,6 +564,34 @@ struct VehicleParams {
                             if (comp.contains("caster_per_load")) load_arr6(comp["caster_per_load"], dst.compliance.caster_per_load);
                             if (comp.contains("track_per_load")) load_arr6(comp["track_per_load"], dst.compliance.track_per_load);
                             if (comp.contains("wheelbase_per_load")) load_arr6(comp["wheelbase_per_load"], dst.compliance.wheelbase_per_load);
+                        }
+
+                        if (src.contains("sample_values")) {
+                            auto& sv = src["sample_values"];
+                            auto load_vec = [](const nlohmann::json& node, std::vector<double>& dst) {
+                                dst.clear();
+                                if (!node.is_array()) return;
+                                dst.reserve(node.size());
+                                for (const auto& v : node) dst.push_back(v.get<double>());
+                            };
+                            if (sv.contains("travel_m")) load_vec(sv["travel_m"], dst.samples.travel_m);
+                            if (sv.contains("camber_rad")) load_vec(sv["camber_rad"], dst.samples.camber_rad);
+                            if (sv.contains("toe_rad")) load_vec(sv["toe_rad"], dst.samples.toe_rad);
+                            if (sv.contains("caster_rad")) load_vec(sv["caster_rad"], dst.samples.caster_rad);
+                            if (sv.contains("kpi_rad")) load_vec(sv["kpi_rad"], dst.samples.kpi_rad);
+                            if (sv.contains("track_change_m")) load_vec(sv["track_change_m"], dst.samples.track_change_m);
+                            if (sv.contains("rc_height_m")) load_vec(sv["rc_height_m"], dst.samples.rc_height_m);
+                            if (sv.contains("jacking_force_per_fy")) load_vec(sv["jacking_force_per_fy"], dst.samples.jacking_force_per_fy);
+                            if (sv.contains("anti_brake")) load_vec(sv["anti_brake"], dst.samples.anti_brake);
+                            if (sv.contains("anti_drive")) load_vec(sv["anti_drive"], dst.samples.anti_drive);
+                            if (sv.contains("roll_rad")) load_vec(sv["roll_rad"], dst.samples.roll_rad);
+                            if (sv.contains("roll_camber_residual_rad")) load_vec(sv["roll_camber_residual_rad"], dst.samples.roll_camber_residual_rad);
+                            if (sv.contains("roll_toe_residual_rad")) load_vec(sv["roll_toe_residual_rad"], dst.samples.roll_toe_residual_rad);
+                            if (sv.contains("roll_center_height_m")) load_vec(sv["roll_center_height_m"], dst.samples.roll_center_height_m);
+                            if (sv.contains("steer_rad")) load_vec(sv["steer_rad"], dst.samples.steer_rad);
+                            if (sv.contains("steer_rack_m")) load_vec(sv["steer_rack_m"], dst.samples.steer_rack_m);
+                            if (sv.contains("steer_camber_rad")) load_vec(sv["steer_camber_rad"], dst.samples.steer_camber_rad);
+                            if (sv.contains("steer_toe_rad")) load_vec(sv["steer_toe_rad"], dst.samples.steer_toe_rad);
                         }
 
                         if (src.contains("hardpoints")) {
