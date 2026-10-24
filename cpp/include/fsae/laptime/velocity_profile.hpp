@@ -62,8 +62,7 @@ struct VehiclePerformance {
     double aero_nominal_yaw_rad = 0.0;
     bool aero_drs_active = false;
 
-    double warmup_distance = 10.0;
-    double warmup_accel_limit = 0.6 * 9.81;
+    // 発進は ax_max(v) の低速値（GGV ではトラクション制限込み）で表す。旧 warmup ランプは削除（Issue #24）。
 
     // Steering actuator feasibility limits. These are disabled by default so
     // angle-steering and legacy callers keep the original friction-only profile.
@@ -188,7 +187,9 @@ private:
                 vp.v = std::min(vp.v, steering_cap);
             }
 
-            vp.v = std::max(vp.v, perf_.min_speed);
+            if (std::abs(vp.kappa) > 1e-6) {
+                vp.v = std::max(vp.v, perf_.min_speed);  // 下限はコーナーのみ（直線の静止発進を妨げない）
+            }
             profile.push_back(vp);
             s += ds;
         }
@@ -279,14 +280,6 @@ private:
             // 空力ドラッグによる損失
             double drag_accel = get_drag_accel(prev.v);
             double ax_max = std::max(0.0, ax_avail - drag_accel);
-
-            // ウォームアップ制限
-            if (curr.s < perf_.warmup_distance) {
-                double ratio = curr.s / perf_.warmup_distance;
-                double warmup_limit = perf_.warmup_accel_limit + 
-                                    ratio * (perf_.max_lon_accel - perf_.warmup_accel_limit);
-                ax_max = std::min(ax_max, warmup_limit);
-            }
 
             // 積分
             double v_accel_sq = prev.v * prev.v + 2.0 * ax_max * ds;

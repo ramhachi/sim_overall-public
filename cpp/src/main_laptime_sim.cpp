@@ -60,7 +60,8 @@ struct SimulationConfig {
     double max_speed = 50.0;
 
     // 初期速度（Phase 7改善v2: さらに安定性重視）
-    double initial_speed = 6.0;        // [m/s] (8.0→6.0に低下、安定性向上)
+    double initial_speed = 6.0;        // [m/s] ローリングスタート既定（acceleration は 0 = 静止発進, Issue #24）
+    bool initial_speed_explicit = false;
 
     // PIDゲインプリセット
     std::string gain_preset = "default";  // "conservative", "default", "aggressive"
@@ -965,6 +966,11 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
     if (config.eval_mode == "fast" && !config.dt_explicit) {
         config.dt = 0.01;
     }
+    // FSAE acceleration はスタンディングスタート（Issue #24）
+    if (!config.initial_speed_explicit &&
+        (config.track_name == "acceleration" || config.track_name == "accel")) {
+        config.initial_speed = 0.0;
+    }
 
     auto fail_result = [](LapResult& result, const std::string& code,
                           const std::string& message, double failure_time) {
@@ -1186,6 +1192,11 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
     } else {
         laptime::VelocityProfileGenerator vel_gen(perf);
         velocity_profile = vel_gen.generate(*track, 1.0, config.initial_speed);
+        if (velocity_profile.size() > 1 && velocity_profile.front().v < 1e-3) {
+            // 静止発進: v(0)=0 は位置基準の目標速度として特異（追従器が発進しない）。
+            // 先頭点だけ 1 サンプル先の到達可能速度を目標上限にする（プラント初速は 0 のまま）。
+            velocity_profile.front().v = velocity_profile[1].v;
+        }
         result.velocity_profile_fingerprint =
             laptime::velocity_profile_fingerprint(velocity_profile);
         if (!config.velocity_profile_output_file.empty()) {
@@ -3134,7 +3145,7 @@ int main(int argc, char** argv) {
         else if (arg == "--driver-capability-profile" && i + 1 < argc) config.driver_capability_profile_file = argv[++i];
         else if (arg == "--laps" && i + 1 < argc) config.laps = std::stoi(argv[++i]);
         else if (arg == "--output_json") config.output_json_result = true;
-        else if (arg == "--initial-speed" && i + 1 < argc) config.initial_speed = std::stod(argv[++i]);
+        else if (arg == "--initial-speed" && i + 1 < argc) { config.initial_speed = std::stod(argv[++i]); config.initial_speed_explicit = true; }
         else if (arg == "--max-speed" && i + 1 < argc) config.max_speed = std::stod(argv[++i]);
         else if (arg == "--max-lat-accel" && i + 1 < argc) {
             config.max_lat_accel = std::stod(argv[++i]);

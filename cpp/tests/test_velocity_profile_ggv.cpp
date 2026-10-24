@@ -77,3 +77,23 @@ TEST(LapPlanner, OpenTrackTerminalSpeedIsBackwardBoundary) {
     EXPECT_NEAR(stop_end.back().v, 5.0, 1e-9);
     expect_realizable(stop_end, perf);
 }
+
+// Issue #24: standing start — no min_speed floor on the straight, no warmup ramp.
+TEST(LapPlanner, AccelerationEventIsStandingStart) {
+    auto perf = base_perf();
+    perf.cd_a = 0.0;  // isolate the launch from drag
+    auto track = track::create_acceleration_track(75.0);
+    laptime::VelocityProfileGenerator gen(perf);
+    const auto p = gen.generate(track, 1.0, 0.0);
+    ASSERT_GT(p.size(), 70u);
+    EXPECT_DOUBLE_EQ(p.front().v, 0.0);
+    // v(s) = sqrt(2 a s) from rest: no 0.6 g warmup ramp, no 5 m/s floor
+    for (double s : {1.0, 5.0, 10.0}) {
+        const auto& q = p[static_cast<std::size_t>(s)];
+        EXPECT_NEAR(q.v, std::sqrt(2.0 * perf.max_lon_accel * s), 1e-6) << "s=" << s;
+    }
+    // ax continuous through 0→5 m/s (constant traction-limited launch)
+    for (std::size_t i = 0; i < 8; ++i) {
+        EXPECT_NEAR(p[i].ax, perf.max_lon_accel, 1e-6) << "i=" << i;
+    }
+}
