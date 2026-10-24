@@ -31,6 +31,12 @@ data:
   random_seed: 42
   sampling_seed: 42
   max_samples_total: 120000
+  # Inflation-pressure filter (#18 stage 1): train only on samples at the running
+  # pressure (TTC P column). 82.7 kPa = 12 psi, the majority pressure of every TTC
+  # round in data/tiredata (43-74 % of samples). null pools all pressures (old behaviour).
+  # Must match tire.pressure_kpa of the vehicle JSON that uses the exported model.
+  pressure_filter_kpa: 82.7
+  pressure_tolerance_kpa: 3.5  # +/-0.5 psi; TTC steps are 2 psi (13.8 kPa)
 
 # Curriculum Learning Schedule
 curriculum:

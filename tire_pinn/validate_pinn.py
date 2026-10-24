@@ -38,6 +38,8 @@ def load_model(config, checkpoint_path, device):
         tire_name=tire_name,
         data_dir=data_dir,
         source_component_masks=config.get("data", {}).get("source_component_masks"),
+        pressure_filter_kpa=config.get("data", {}).get("pressure_filter_kpa"),
+        pressure_tolerance_kpa=config.get("data", {}).get("pressure_tolerance_kpa", 3.5),
     )
     # Evaluation-only path: the checkpoint carries the trained normalization buffers.
     loader.fit_normalization(np.arange(len(loader.df)))

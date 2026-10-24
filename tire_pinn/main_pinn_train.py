@@ -533,6 +533,8 @@ def main() -> int:
         max_samples_total=max_samples,
         sampling_seed=sampling_seed,
         source_component_masks=data_config.get("source_component_masks"),
+        pressure_filter_kpa=data_config.get("pressure_filter_kpa"),
+        pressure_tolerance_kpa=data_config.get("pressure_tolerance_kpa", 3.5),
     )
     train_loader, val_loader, test_loader = data_loader.create_dataloaders(
         batch_size=batch_size,

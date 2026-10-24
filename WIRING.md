@@ -59,3 +59,15 @@ Apply these in `cpp/include/fsae/vehicle/vehicle_params.hpp` and
   `scratch/pinn_benchmark_params.json`) should become 44900 for the same reason.
 - `vehicle_3dof/6dof/8dof*.hpp` hard-code `Cy = 22000` / `60000`; legacy models, leave
   unless their owner wants the fix (same formula).
+
+## #18 Inflation pressure (stage 1: single-pressure training)
+
+- `tire_pinn/config/pinn_config.yaml` now trains on `data.pressure_filter_kpa: 82.7`
+  (12 psi +/- 3.5 kPa) only, on the next retrain. Existing exported models are still pooled.
+- `vehicle_params.hpp` `TireParams`: add `double pressure_kpa = 82.7; // 空気圧 [kPa]` and
+  parse `tire.pressure_kpa`. It is a declaration of the operating point, not a model input:
+  the vehicle JSON value must equal the `pressure_filter_kpa` the deployed PINN was trained
+  at. If the manifest exposes it later (stage 2, `cpp_exporter.py`), fail-fast on mismatch.
+- Feed it to the thermal contact area: `p.tire.thermal.pressure_kpa = p.tire.pressure_kpa`
+  unless `tire.thermal.pressure_kpa` is given explicitly (see #19 above).
+- Stage 2 (not done): P as 6th PINN input, `k_tire(P)` from the TTC spring-rate column.

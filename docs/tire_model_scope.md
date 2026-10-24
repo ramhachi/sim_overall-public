@@ -20,7 +20,8 @@ Outputs are `Fx` [N], `Fy` [N], `Mx` [Nm], and `Mz` [Nm].
 
 Not represented as inputs:
 
-- inflation pressure
+- inflation pressure (training is filtered to one running pressure,
+  `data.pressure_filter_kpa` in `pinn_config.yaml`, default 82.7 kPa = 12 psi; #18)
 - tread wear and tire age
 - tire-to-tire manufacturing variation
 - rim width/offset beyond the fitted dataset

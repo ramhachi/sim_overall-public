@@ -588,3 +588,34 @@ def test_split_metadata_labels_random_split_as_interpolation():
     metadata = loader.get_split_metadata()
     assert metadata["interpretation"] == "in_distribution_interpolation"
     assert "not a run-level" in metadata["generalization_scope"]
+
+
+def test_ttc_data_loader_pressure_filter_keeps_only_running_pressure(tmp_path: Path):
+    # #18 stage 1: P column [kPa] selects one inflation pressure; others are dropped.
+    tire_name = "Hoosier 18.0X6.0-10, R20"
+    base = [0.0, 40.0, 400.0, 0.2, 0.0, 21.0, 21.2, 82.7, 100.0, 30.0, -1000.0, 1.0, 2.0, 0.1, 0.03, 30.0, 35.0, 40.0, 41.0, 25.0, 0.12]
+    db_rows = [base, base[:7] + [55.2] + base[8:], base[:7] + [96.5] + base[8:]]
+    cr_rows = [base[:3] + [4.0] + base[4:20] + [0.0], base[:3] + [4.0] + base[4:7] + [68.9] + base[8:20] + [0.0]]
+    _write_raw_dat(tmp_path / "RunData_DriveBrake_ASCII_SI_Round9" / "B2356run27.dat", tire_name, db_rows)
+    _write_raw_dat(tmp_path / "RunData_Cornering_ASCII_SI_Round9" / "B2356run28.dat", tire_name, cr_rows)
+
+    pooled = TTCDataLoader(normalize=False, tire_name="Hoosier_18p0X6p0-10_R20", data_dir=tmp_path)
+    assert len(pooled.df) == 5
+    assert "P" not in pooled.df.columns
+
+    filtered = TTCDataLoader(
+        normalize=False,
+        tire_name="Hoosier_18p0X6p0-10_R20",
+        data_dir=tmp_path,
+        pressure_filter_kpa=82.7,
+    )
+    assert len(filtered.df) == 2
+    assert set(filtered.df["source_test_type"]) == {"Db", "Cr"}
+
+    with pytest.raises(ValueError):
+        TTCDataLoader(
+            normalize=False,
+            tire_name="Hoosier_18p0X6p0-10_R20",
+            data_dir=tmp_path,
+            pressure_filter_kpa=200.0,
+        )

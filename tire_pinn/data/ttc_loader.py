@@ -49,8 +49,14 @@ class TTCDataLoader:
         max_samples_total: int | None = None,
         sampling_seed: int = 42,
         source_component_masks: Dict[str, list[float]] | None = None,
+        pressure_filter_kpa: float | None = None,
+        pressure_tolerance_kpa: float = 3.5,
     ):
         self.normalize = normalize
+        # Keep only samples at one inflation pressure (TTC P column, kPa) so the
+        # pressure sweep is not pooled into one 5-input model (#18). None = no filter.
+        self.pressure_filter_kpa = pressure_filter_kpa
+        self.pressure_tolerance_kpa = pressure_tolerance_kpa
         self.data_dir = Path(data_dir) if data_dir is not None else None
         self.manifest_path = resolve_manifest_path(manifest_path, self.data_dir)
         self.raw_manifest = load_manifest(self.manifest_path)
@@ -125,6 +131,20 @@ class TTCDataLoader:
             raise FileNotFoundError(f"No TTC data files found for dataset: {self.dataset_id}")
 
         df = pd.concat(df_list, ignore_index=True)
+        if self.pressure_filter_kpa is not None:
+            if "P" not in df.columns:
+                raise ValueError("pressure_filter_kpa set but TTC data has no P column")
+            keep = (df["P"] - self.pressure_filter_kpa).abs() <= self.pressure_tolerance_kpa
+            print(
+                f"  Pressure filter {self.pressure_filter_kpa:.1f}"
+                f"+/-{self.pressure_tolerance_kpa:.1f} kPa: {int(keep.sum())}/{len(df)} samples kept"
+            )
+            df = df[keep]
+            if df.empty:
+                raise ValueError(
+                    f"No TTC samples at {self.pressure_filter_kpa} kPa for {self.dataset_id}"
+                )
+        df = df.drop(columns="P", errors="ignore")
         df = df.dropna().reset_index(drop=True)
         if "source_test_type" in df.columns:
             df["source_test_type"] = df["source_test_type"].fillna("Unknown")
@@ -187,6 +207,8 @@ class TTCDataLoader:
                 "Mz": pd.to_numeric(df_raw["MZ"], errors="coerce").astype(np.float32),
             }
         )
+        if "P" in df_raw.columns:
+            extracted["P"] = pd.to_numeric(df_raw["P"], errors="coerce").astype(np.float32)
         extracted["source_file"] = path.name
         extracted["source_path"] = str(path)
         extracted["source_id"] = path.stem
