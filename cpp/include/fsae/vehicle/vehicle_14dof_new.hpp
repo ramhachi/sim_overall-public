@@ -309,9 +309,26 @@ public:
     }
     
     // ======== デバッグ用 ========
+    /// Common low-speed slip definition shared by PINN/MF/TMeasy (#20):
+    ///   V   = sqrt(vx^2 + v_N^2)
+    ///   kappa = (omega*Re - vx) / V,  alpha = -atan2(vy, V)
+    struct CommonSlip {
+        double transport;  // [m/s]
+        double kappa;      // [-]
+        double alpha_rad;  // [rad]
+    };
+    CommonSlip common_slip(double vx_wheel, double vy_wheel, double omega_r) const {
+        const double v_n = std::max(params_.tire.v_N, 1e-6);
+        const double transport = std::sqrt(vx_wheel * vx_wheel + v_n * v_n);
+        return {transport, (omega_r - vx_wheel) / transport,
+                -std::atan2(vy_wheel, transport)};
+    }
     std::array<double, 4> get_tire_Fz() const { return tire_Fz_; }
     std::array<double, 4> get_tire_Fx() const { return tire_Fx_; }
     std::array<double, 4> get_tire_Fy() const { return tire_Fy_; }
+    std::array<double, 4> get_tire_Fx_body() const { return tire_Fx_body_; }
+    std::array<double, 4> get_tire_Fy_body() const { return tire_Fy_body_; }
+    std::array<double, 4> get_tire_Fz_body() const { return tire_Fz_body_; }
     std::array<double, 4> get_tire_Mz() const { return tire_Mz_; }
     bool is_nn_tire_loaded() const { return nn_model_loaded_; }
     bool is_magic_formula_tire_loaded() const { return mf_model_loaded_; }
@@ -599,6 +616,9 @@ private:
     mutable std::array<double, 4> tire_Fz_ = {0, 0, 0, 0};
     mutable std::array<double, 4> tire_Fx_ = {0, 0, 0, 0};
     mutable std::array<double, 4> tire_Fy_ = {0, 0, 0, 0};
+    mutable std::array<double, 4> tire_Fx_body_ = {0, 0, 0, 0};
+    mutable std::array<double, 4> tire_Fy_body_ = {0, 0, 0, 0};
+    mutable std::array<double, 4> tire_Fz_body_ = {0, 0, 0, 0};
     mutable std::array<double, 4> tire_Mz_ = {0, 0, 0, 0};  // セルフアライニングトルク
     mutable std::array<double, 2> kingpin_torque_ = {0, 0};  // 前輪キングピン軸トルク [Nm]
     mutable std::array<double, 4> bw_forces_ = {0, 0, 0, 0};
@@ -1319,6 +1339,7 @@ private:
         std::array<double, 4> susp_travel_from_eq_arr = {0.0, 0.0, 0.0, 0.0};
         std::array<double, 4> R_eff{};
         std::array<double, 4> tire_Mx_stage = {0.0, 0.0, 0.0, 0.0};
+        std::array<double, 4> tire_Fz_body_stage = {0.0, 0.0, 0.0, 0.0};
 
         for (int i = 0; i < 4; ++i) {
             // 各輪が「見る」ロール角（フレームねじりを考慮）
@@ -1442,25 +1463,18 @@ private:
                 double vy_wheel = v_wheel_vec.y();
                 
                 double omega_r = state.omega[i] * R_eff[i];
-                double vsx = vx_wheel - omega_r;
+                // One slip definition for all tire models (#20). TMeasy consumes
+                // the same transport speed and slip velocities internally.
+                const CommonSlip slip = common_slip(vx_wheel, vy_wheel, omega_r);
+                double vsx = -slip.transport * slip.kappa;
                 double vsy = vy_wheel;
-                double vcx = std::abs(omega_r);
-                
                 
                 // タイヤ力計算（NN → MF → TMeasy フォールバック）
                 if (nn_model_loaded_) {
                     // === NN タイヤモデル ===
 
-                    // スリップ率（SR）の計算
-                    const double sr_denom = std::max(
-                        std::max(std::abs(vx_wheel), std::abs(omega_r)),
-                        params_.tire.v_N);
-                    const double SR_inst = (omega_r - vx_wheel) / sr_denom;
-
-                    // スリップ角（SA）の計算 [deg]
-                    const double SA_inst = -std::atan2(
-                        vy_wheel,
-                        std::max(std::abs(vx_wheel), params_.tire.v_N)) * 180.0 / M_PI;
+                    const double SR_inst = slip.kappa;
+                    const double SA_inst = slip.alpha_rad * 180.0 / M_PI;
 
                     // Current deployable TTC PINNs have no measured camber coverage.
                     // Feeding static negative camber into those models creates a
@@ -1474,7 +1488,7 @@ private:
 
                     const double sigma_x = compute_effective_relaxation_length(true, Fz_tire[i], TSTC);
                     const double sigma_y = compute_effective_relaxation_length(false, Fz_tire[i], TSTC);
-                    const double transport_velocity = std::max(std::abs(vx_wheel), params_.tire.v_N);
+                    const double transport_velocity = slip.transport;
 
                     const double kappa_lag = state.tire_xi[i];
                     const double alpha_lag = state.tire_eta[i];
@@ -1491,11 +1505,12 @@ private:
 
                     const auto nn_forces = evaluate_pinn_tire_force(i, nn_input);
 
-                    // 車体座標系へ変換（完全な回転行列使用）
-                    Eigen::Vector3d F_tire_vec(nn_forces.Fx, nn_forces.Fy, 0.0);
+                    // 車体座標系へ変換（接地面反力 Fz も含めた 3D 回転, #21）
+                    Eigen::Vector3d F_tire_vec(nn_forces.Fx, nn_forces.Fy, -Fz_tire[i]);
                     Eigen::Vector3d F_body_vec = R_wheel.transpose() * F_tire_vec;
                     Fx_wheel[i] = F_body_vec.x();
                     Fy_wheel[i] = F_body_vec.y();
+                    tire_Fz_body_stage[i] = F_body_vec.z();
                     tire_Fx_stage[i] = nn_forces.Fx;
                     tire_Fy_stage[i] = nn_forces.Fy;
                     tire_Mz_stage[i] = nn_forces.Mz;
@@ -1505,27 +1520,10 @@ private:
                     // === Magic Formula タイヤモデル (with Relaxation Length) ===
                     // ガイド §5.4: 過渡特性（緩和長）の実装
                     
-                    // 1. 瞬間的なスリップの計算（Kinematic Slips）
-                    // SAE/Pacejka definition to avoid division by zero:
-                    // kappa = (omega*Re - vx) / max(vx, omega*Re)
-                    double kappa_inst = 0.0;
-                    double v_transport = std::abs(vx_wheel);
-                    double v_rot = omega_r; // Re is already multiplied in omega_r? Wait, let's check:
-                    // `omega_r` was defined as `state.omega[i] * tire_params_.radius`. Yes.
-                    
-                    if (std::abs(vx_wheel) > 0.1 || std::abs(v_rot) > 0.1) {
-                        double denominator = std::max(std::abs(vx_wheel), std::abs(v_rot));
-                        denominator = std::max(denominator, 0.1); // Prevent div by 0 completely
-                        // driving: omega*R > vx (kappa > 0). braking: vx > omega*R (kappa < 0)
-                        kappa_inst = (v_rot - vx_wheel) / denominator;
-                    }
-                    
-                    double alpha_inst_rad = 0.0;
-                    if (std::abs(vx_wheel) > 0.1) {
-                        // SA = -atan(vy / |vx|), same as NN
-                        alpha_inst_rad = -std::atan2(vy_wheel, std::abs(vx_wheel)); // [rad]
-                    }
-                    
+                    // 1. 共通の瞬間スリップ（#20）
+                    const double kappa_inst = slip.kappa;
+                    const double alpha_inst_rad = slip.alpha_rad;
+
                     // 2. 状態変数から遅れスリップを取得
                     // tire_xi -> Lagged Kappa (kappa_lag)
                     // tire_eta -> Lagged Alpha (alpha_lag) [rad]
@@ -1537,7 +1535,7 @@ private:
                     const double tire_temp = tire_thermal_.get_temperature(i);
                     double Lx = compute_effective_relaxation_length(true, Fz_tire[i], tire_temp);
                     double Ly = compute_effective_relaxation_length(false, Fz_tire[i], tire_temp);
-                    double V_transport = std::max(std::abs(vx_wheel), 0.1); // 搬送速度
+                    const double V_transport = slip.transport;
                     
                     double d_kappa = (V_transport / Lx) * (kappa_inst - kappa_lag);
                     double d_alpha = (V_transport / Ly) * (alpha_inst_rad - alpha_lag_rad);
@@ -1555,11 +1553,12 @@ private:
 
                     const auto vehicle_forces = magic_formula_to_vehicle_convention(mf_forces);
 
-                    // 車体座標系へ変換
-                    Eigen::Vector3d F_tire_vec_mf(vehicle_forces.Fx, vehicle_forces.Fy, 0.0);
+                    // 車体座標系へ変換（接地面反力 Fz も含めた 3D 回転, #21）
+                    Eigen::Vector3d F_tire_vec_mf(vehicle_forces.Fx, vehicle_forces.Fy, -Fz_tire[i]);
                     Eigen::Vector3d F_body_vec_mf = R_wheel.transpose() * F_tire_vec_mf;
                     Fx_wheel[i] = F_body_vec_mf.x();
                     Fy_wheel[i] = F_body_vec_mf.y();
+                    tire_Fz_body_stage[i] = F_body_vec_mf.z();
                     tire_Fx_stage[i] = vehicle_forces.Fx;
                     tire_Fy_stage[i] = vehicle_forces.Fy;
                     tire_Mz_stage[i] = vehicle_forces.Mz;
@@ -1576,13 +1575,14 @@ private:
                     tire_params_dynamic.Ly = compute_effective_relaxation_length(false, Fz_tire[i], tire_temp);
 
                     auto tire_out = compute_tmeasy(tire_params_dynamic, tire_state, Fz_tire[i],
-                                                  vsx, vsy, std::max(vcx, 0.1));
+                                                  vsx, vsy, slip.transport);
 
-                    // 車体座標系へ変換（完全な回転行列使用）
-                    Eigen::Vector3d F_tire_vec_tm(tire_out.Fx, tire_out.Fy, 0.0);
+                    // 車体座標系へ変換（接地面反力 Fz も含めた 3D 回転, #21）
+                    Eigen::Vector3d F_tire_vec_tm(tire_out.Fx, tire_out.Fy, -Fz_tire[i]);
                     Eigen::Vector3d F_body_vec_tm = R_wheel.transpose() * F_tire_vec_tm;
                     Fx_wheel[i] = F_body_vec_tm.x();
                     Fy_wheel[i] = F_body_vec_tm.y();
+                    tire_Fz_body_stage[i] = F_body_vec_tm.z();
                     tire_Fx_stage[i] = tire_out.Fx;
                     tire_Fy_stage[i] = tire_out.Fy;
                     tire_Mz_stage[i] = tire_out.Mz;
@@ -1598,6 +1598,9 @@ private:
             if (update_cache) {
                 tire_Fx_[i] = tire_Fx_stage[i];
                 tire_Fy_[i] = tire_Fy_stage[i];
+                tire_Fx_body_[i] = Fx_wheel[i];
+                tire_Fy_body_[i] = Fy_wheel[i];
+                tire_Fz_body_[i] = tire_Fz_body_stage[i];
                 tire_Mz_[i] = tire_Mz_stage[i];
             }
             
@@ -1713,7 +1716,9 @@ private:
         for (int i = 0; i < 4; ++i) {
             double m_u = params_.mass.m_unsprung[i];
             double F_susp_on_unsprung = F_spring[i] + F_bw[i] + F_lugre[i] + F_bump[i] + F_jacking[i] + F_arb[i];
-            double az_u = g + (F_susp_on_unsprung + F_unsprung_lt[i] - Fz_tire[i]) / m_u;
+            // Rotated contact force: with camber/steer the vertical load also has
+            // body x/y components and Fx/Fy feed the body-z force (#21).
+            double az_u = g + (F_susp_on_unsprung + F_unsprung_lt[i] + tire_Fz_body_stage[i]) / m_u;
 
             dxdt(12 + i) = state.vz_u[i];
             dxdt(16 + i) = az_u;

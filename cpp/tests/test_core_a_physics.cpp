@@ -81,13 +81,9 @@ TEST(CoreA_Mass, SkidpadLateralAccelUsesTotalMass) {
     const double vy0 = veh.state().vy;
     veh.step(0.001, in);
     const auto& s = veh.state();
-    const auto Fx = veh.get_tire_Fx();
-    const auto Fy = veh.get_tire_Fy();
+    const auto Fy = veh.get_tire_Fy_body();
     double fy_body = 0.0;
-    for (int i = 0; i < 4; ++i) {
-        const double d = (i < 2) ? in.steering : 0.0;
-        fy_body += Fy[i] * std::cos(d) + Fx[i] * std::sin(d);
-    }
+    for (int i = 0; i < 4; ++i) fy_body += Fy[i];
     const double g_y = 9.81 * std::sin(s.phi) * std::cos(s.theta);
     const double a_y = (s.vy - vy0) / 0.001 + s.r * s.vx - g_y;
     const double m_total = p.mass.m_sprung + p.mass.m_unsprung[0] + p.mass.m_unsprung[1]
@@ -319,6 +315,54 @@ TEST(CoreA_Tire, RollingResistanceAndEffectiveRadius) {
     const double Re = p.tire.radius - Fz / (3.0 * p.tire.k_tire);
     const double kappa = (veh.state().omega[0] * Re - veh.state().vx) / veh.state().vx;
     EXPECT_LT(std::abs(kappa), 2e-3);
+}
+
+// #20: one low-speed slip definition (virtual velocity) is continuous through rest.
+TEST(CoreA_Tire, CommonSlipIsContinuousAtLowSpeed) {
+    VehicleParams p = VehicleParams::default_fsae();
+    Vehicle14DOF_New veh(p);
+    double prev_kappa = 0.0, prev_alpha = 0.0;
+    for (int k = 0; k <= 200; ++k) {
+        const double vx = 0.01 * k;
+        const double omega_r = 0.5 + 0.7 * vx;
+        const auto s = veh.common_slip(vx, 0.1 + 0.2 * vx, omega_r);
+        EXPECT_TRUE(std::isfinite(s.transport));
+        EXPECT_TRUE(std::isfinite(s.kappa));
+        EXPECT_TRUE(std::isfinite(s.alpha_rad));
+        EXPECT_GE(s.transport, p.tire.v_N - 1e-12);
+        if (k > 0) {
+            EXPECT_LT(std::abs(s.kappa - prev_kappa), 0.05);
+            EXPECT_LT(std::abs(s.alpha_rad - prev_alpha), 0.05);
+        }
+        prev_kappa = s.kappa;
+        prev_alpha = s.alpha_rad;
+    }
+    const auto rest = veh.common_slip(0.0, 0.0, 0.0);
+    EXPECT_NEAR(rest.kappa, 0.0, 1e-12);
+    EXPECT_NEAR(rest.alpha_rad, 0.0, 1e-12);
+}
+
+// #21: the full contact force is rotated; a cambered vertical load feeds body x/y.
+TEST(CoreA_Tire, CamberedVerticalLoadProjectsToBodyPlane) {
+    VehicleParams zero = VehicleParams::default_fsae();
+    zero.suspension.static_camber = {0.0, 0.0, 0.0, 0.0};
+    VehicleParams cambered = zero;
+    cambered.suspension.static_camber = {0.05, 0.05, 0.0, 0.0};
+
+    Vehicle14DOF_New flat(zero), tilted(cambered);
+    flat.reset();
+    tilted.reset();
+    DriverInput in;
+    in.gear = 0;
+    flat.step(0.001, in);
+    tilted.step(0.001, in);
+
+    double fy_flat = 0.0, fy_tilted = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        fy_flat += flat.get_tire_Fy_body()[i];
+        fy_tilted += tilted.get_tire_Fy_body()[i];
+    }
+    EXPECT_GT(std::abs(fy_tilted - fy_flat), 10.0);
 }
 
 namespace {
