@@ -377,3 +377,29 @@ TEST(CoreA_MotionRatio, ReportDamperMotionRatioEffect) {
               << " | off: phi=" << off.phi << " r=" << off.r << " z=" << off.z << std::endl;
     EXPECT_NE(on.phi, off.phi);
 }
+
+// #14: road step input. Single wheel: initial unsprung acceleration = k_t*h/m_u.
+// All four wheels: the whole car settles exactly h higher (quasi-static quarter-car solution).
+TEST(CoreA_Road, QuarterCarStepResponse) {
+    const VehicleParams p = VehicleParams::default_fsae();
+    const double h = 0.01;  // road rises 10 mm -> z_road = -h (Z down)
+
+    Vehicle14DOF_New one(p);
+    const double z_u0 = one.state().z_u[0];
+    one.set_road_input({-h, 0.0, 0.0, 0.0});
+    one.step(1e-4, DriverInput{});
+    const double a_u = one.state().vz_u[0] / 1e-4;
+    EXPECT_NEAR(a_u, -p.tire.k_tire * h / p.mass.m_unsprung[0], 0.05 * p.tire.k_tire * h / p.mass.m_unsprung[0]);
+    EXPECT_LT(one.state().z_u[0], z_u0);
+
+    VehicleParams q = p;  // remove hysteresis/friction so the quasi-static solution is unique
+    q.suspension.bw_alpha = 0.0;
+    q.suspension.lugre_sigma0 = 0.0;  // LuGre reduces to viscous sigma1*v
+    Vehicle14DOF_New all(q);
+    const double z0 = all.state().z;
+    const auto fz0 = all.get_tire_Fz();
+    all.set_road_input({-h, -h, -h, -h});
+    for (int k = 0; k < 4000; ++k) all.step(0.001, DriverInput{});
+    EXPECT_NEAR(all.state().z - z0, -h, 0.02 * h);
+    EXPECT_NEAR(all.get_tire_Fz()[0], fz0[0], 0.01 * fz0[0]);
+}

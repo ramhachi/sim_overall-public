@@ -134,6 +134,10 @@ public:
     /// 前輪キングピン軸トルク [FL, FR] [Nm]（角度モードでも診断用に更新, #5）
     const std::array<double, 2>& get_kingpin_torque() const { return kingpin_torque_; }
     
+    /// 路面高さ [FL,FR,RL,RR] [m]（Z 下向き正: 路面が上がると負, #14）。step 間は保持。
+    void set_road_input(const std::array<double, 4>& z_road) { z_road_ = z_road; }
+    const std::array<double, 4>& road_input() const { return z_road_; }
+
     // ======== 初期化 ========
     void set_initial_velocity(double vx) {
         state_.vx = vx;
@@ -585,6 +589,7 @@ private:
     // DRSシステム
     DRSSystem drs_system_;
     mutable bool drs_active_ = false;
+    std::array<double, 4> z_road_ = {0, 0, 0, 0};  // 路面高さ（Z 下向き正）[m]
     double brake_pressure_lagged_ = 0.0;  // ライン圧1次遅れ（step毎ZOH更新）[Pa]
     int last_gear_ = -1;                  // 変速検出用（-1 = 未入力）
     double shift_end_time_ = -1.0;        // 駆動トルク遮断の終了時刻 [s]
@@ -1350,7 +1355,8 @@ private:
             F_bump[i] = mr_d * compute_bumpstop_force(mr_d * x_eff, i);
             
             // タイヤ垂直力
-            double tire_deflection = state.z_u[i] - z_u_equilibrium_[i];
+            // ponytail: road height only (no road normal / dz_road/dt in tyre damping); add for kerbs.
+            double tire_deflection = state.z_u[i] - z_road_[i] - z_u_equilibrium_[i];
             double tire_velocity = state.vz_u[i];
             Fz_tire[i] = static_Fz_[i] + params_.mass.m_unsprung[i] * g
                        + k_tire * tire_deflection + c_tire * tire_velocity;

@@ -45,3 +45,11 @@ Changes other packages must apply so their outputs match the new 14DOF runtime s
    `powertrain.I_engine`, `powertrain.I_gearbox`, `powertrain.shift_time_s`;
    `mass.Iw` as 4-array; `tire.C_rr` (default 0.015 — replace with coast-down fit).
    `brake.balance` is now the front/rear master-cylinder pressure ratio (0.5 neutral; #36).
+
+## Track / laptime package
+
+5. **#14 road input.** `Vehicle14DOF_New::set_road_input(std::array<double,4> z_road)` sets per-wheel
+   road height (SAE Z down: a road rising under the wheel is **negative**), held until changed.
+   Tyre deflection is `z_u - z_road_i - z_u_eq`. Callers (laptime loop, `lap_vehicle.hpp`) should
+   interpolate track z/bank/grade + kerb/roughness at each contact patch before every `step()`.
+   Default (never called) = flat road, unchanged behaviour.
