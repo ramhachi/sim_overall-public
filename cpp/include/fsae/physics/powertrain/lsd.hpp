@@ -30,7 +30,10 @@ public:
         double effective_radius;  ///< クラッチ有効半径 [m] (0.03-0.05 m)
         double clutch_friction;   ///< クラッチ摩擦係数 [-] (0.08-0.12)
         int num_plates;           ///< クラッチプレート数 [-] (4-12枚)
-        
+        /// tanh 平滑化の差速スケール [rad/s]。RK4 @1 ms 安定条件 T_lock·dt/(Iw·ω_s) < 2.78 より
+        /// Iw = 0.5 kg m², T_lock ≤ 130 Nm で ω_s ≥ 0.094 → 0.1（車輪周速差 ≈ 2 cm/s, 実用上ロック）
+        double omega_smooth = 0.1;
+
         /**
          * @brief FSAE標準的なLSDパラメータ（トラクション重視）
          */
@@ -146,39 +149,23 @@ public:
                           double omega_right,
                           double& torque_left,
                           double& torque_right) const {
-        // 差動制限トルク計算
-        double locking_torque = compute_locking_torque(
+        // 差動制限トルク（プリロード + ランプ項。ランプは入力トルクの符号で選択：
+        // エンジンブレーキ時は減速ランプ）
+        const double locking_torque = compute_locking_torque(
             total_torque, omega_left, omega_right);
-        
+
         // オープンデフ基本成分: 均等配分
-        double base_torque = total_torque * 0.5;
-        
-        // 左右輪速度差
-        double omega_diff = omega_left - omega_right;
-        
-        if (std::abs(omega_diff) < 0.01) {
-            // ロック状態（速度差なし）: 均等配分
-            // プリロードによりロック維持
-            torque_left = base_torque;
-            torque_right = base_torque;
-        } else {
-            // スリップ状態: クラッチ摩擦トルクが速度差に対抗
-            // 摩擦トルク上限 = locking_torque, base_torque を超えない
-            double torque_bias = std::min(
-                locking_torque,
-                std::abs(base_torque)
-            );
-            
-            // 摩擦は速い輪からトルクを奪い遅い輪に渡す
-            if (omega_left > omega_right) {
-                torque_left = base_torque - torque_bias * 0.5;
-                torque_right = base_torque + torque_bias * 0.5;
-            } else {
-                torque_left = base_torque + torque_bias * 0.5;
-                torque_right = base_torque - torque_bias * 0.5;
-            }
-        }
-        // 減速時も LSD 効果を維持（以前の符号強制オーバーライドを除去）
+        const double base_torque = total_torque * 0.5;
+
+        // 連続化したクラッチ摩擦: T_bias = T_lock·tanh(Δω/ω_s)
+        // |base_torque| キャップは撤廃（実 Salisbury のプリロードは入力トルクと無関係に効く → コーストでも有効）。
+        // 摩擦は速い輪からトルクを奪い遅い輪に渡す。
+        // ponytail: 静摩擦ロック拘束は無し（Δω≈0 で T_bias→0）。実測ロッキング面 T_lock(T_in,Δω) が
+        // 得られたら compute_locking_torque を 2D LUT に置換する。
+        const double omega_s = std::max(params_.omega_smooth, 1e-6);
+        const double torque_bias = locking_torque * std::tanh((omega_left - omega_right) / omega_s);
+        torque_left = base_torque - torque_bias * 0.5;
+        torque_right = base_torque + torque_bias * 0.5;
     }
     
     /**

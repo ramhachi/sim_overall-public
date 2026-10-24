@@ -5,20 +5,28 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <stdexcept>
+#include <utility>
 
 namespace fsae::physics::powertrain {
 
+/// CBR600RR 13 点 WOT トルクカーブ（vehicle_params の既定値もこれを参照すること）
+inline const std::vector<double> kCbr600rrRpm = {
+    1000, 3000, 5000, 7000, 9000, 10000, 11000, 12000, 12500, 13000, 13500, 14000, 14500};
+inline const std::vector<double> kCbr600rrTorque = {
+    35, 40, 48, 54, 60, 61, 62, 62.5, 63, 62, 60, 57, 55};
+
 /// エンジントルクマップ
-/// RPMに対するトルク出力を線形補間で計算
+/// WOT 曲線 + 閉スロットル曲線（または 2D 部分負荷マップ）を線形 / bilinear 補間
 class EngineTorqueMap {
 public:
     EngineTorqueMap() = default;
-    
+
     /// @brief トルクカーブを設定
     /// @param rpm_points RPM点のリスト（昇順でなければならない）
     /// @param torque_points 各RPMでのトルク値 [Nm]
-    void set_curve(const std::vector<double>& rpm_points, 
+    void set_curve(const std::vector<double>& rpm_points,
                    const std::vector<double>& torque_points) {
         if (rpm_points.size() != torque_points.size()) {
             throw std::invalid_argument("RPM points and torque points must have the same size");
@@ -26,10 +34,13 @@ public:
         if (rpm_points.size() < 2) {
             throw std::invalid_argument("At least 2 points required for interpolation");
         }
-        
+
         rpm_points_ = rpm_points;
         torque_points_ = torque_points;
-        
+        closed_points_.clear();
+        throttle_points_.clear();
+        table_.clear();
+
         // RPMが昇順かチェック
         for (size_t i = 1; i < rpm_points_.size(); ++i) {
             if (rpm_points_[i] <= rpm_points_[i-1]) {
@@ -37,29 +48,84 @@ public:
             }
         }
     }
-    
-    /// @brief 指定RPMでのエンジントルクを計算（線形補間）
-    /// @param rpm エンジン回転数 [rpm]
-    /// @param throttle スロットル開度 [0-1]
-    /// @return エンジントルク [Nm]
+
+    /// @brief 2D 部分負荷マップ T(rpm, throttle) を設定（ダイノ / ECU マップ）。set_curve() の後に呼ぶ。
+    /// @param throttle_points スロットル開度 [0-1]（狭義昇順, >=2 点）
+    /// @param torque_table rpm_points 行 × throttle_points 列 [Nm]（閉スロットル列は負でよい）
+    /// 設定時は 1D×スロットル混合より優先する。
+    void set_throttle_table(const std::vector<double>& throttle_points,
+                            const std::vector<std::vector<double>>& torque_table) {
+        if (throttle_points.size() < 2 || torque_table.size() != rpm_points_.size()) {
+            throw std::invalid_argument("torque_table needs rpm_points rows and >=2 throttle_points");
+        }
+        for (size_t i = 1; i < throttle_points.size(); ++i) {
+            if (throttle_points[i] <= throttle_points[i - 1]) {
+                throw std::invalid_argument("throttle_points must be strictly ascending");
+            }
+        }
+        std::vector<double> flat;
+        for (const auto& row : torque_table) {
+            if (row.size() != throttle_points.size()) {
+                throw std::invalid_argument("torque_table row size must equal throttle_points size");
+            }
+            flat.insert(flat.end(), row.begin(), row.end());
+        }
+        throttle_points_ = throttle_points;
+        table_ = std::move(flat);
+    }
+
+    /// @brief 閉スロットル（モータリング）トルク曲線 [Nm]（負値, rpm_points と同サイズ）。set_curve() の後に呼ぶ。
+    void set_closed_curve(const std::vector<double>& torque_closed) {
+        if (torque_closed.size() != rpm_points_.size()) {
+            throw std::invalid_argument("torque_closed_curve must match rpm_points size");
+        }
+        closed_points_ = torque_closed;
+    }
+
+    /// @brief エンジントルク [Nm]
+    /// - 2D テーブルがあれば bilinear 補間
+    /// - 無ければ T = thr·T_WOT(rpm) + (1−thr)·T_closed(rpm)
+    /// - rpm > rpm_points.back()：レブリミッタ（燃料カット）。燃焼トルク 0、摩擦/ポンプ損失 T_closed は残す
+    /// - rpm < rpm_points.front()：先頭点にクランプ
     double get_torque(double rpm, double throttle = 1.0) const {
         if (rpm_points_.empty()) {
             return 0.0;
         }
-        
-        // スロットルを0-1にクランプ
         throttle = std::clamp(throttle, 0.0, 1.0);
-        
-        // RPMを範囲内にクランプ
-        rpm = std::clamp(rpm, rpm_points_.front(), rpm_points_.back());
-        
-        // 線形補間
-        double torque_max = interpolate(rpm);
-        
-        // スロットル開度を考慮（簡易モデル：線形）
-        return torque_max * throttle;
+        if (rpm > rpm_points_.back()) {
+            return closed_torque(rpm_points_.back());
+        }
+        rpm = std::max(rpm, rpm_points_.front());
+        if (!table_.empty()) {
+            const auto [i, wr] = locate(rpm_points_, rpm);
+            const auto [j, wt] = locate(throttle_points_, throttle);
+            const size_t n = throttle_points_.size();
+            auto at = [&](size_t a, size_t b) { return table_[a * n + b]; };
+            return (1 - wr) * ((1 - wt) * at(i, j) + wt * at(i, j + 1))
+                 + wr * ((1 - wt) * at(i + 1, j) + wt * at(i + 1, j + 1));
+        }
+        return throttle * interpolate(torque_points_, rpm) + (1.0 - throttle) * closed_torque(rpm);
     }
-    
+
+    /// @brief 閉スロットルトルク [Nm]（負）
+    /// torque_closed_curve 未設定時の既定は物理的推定（実測ではない）：
+    ///   599 cc 4 ストロークのモータリング MEP（摩擦 + 閉スロットルのポンプ損失）を
+    ///   ピークトルク回転で ≈1.05 bar と仮定 → T = MEP·Vd/(4π) ≈ 5.0 Nm ≈ 0.08·T_peak。
+    ///   摩擦は流体潤滑支配で回転数にほぼ比例とし T_closed = −0.08·T_peak·rpm/rpm_peak。
+    double closed_torque(double rpm) const {
+        if (rpm_points_.empty()) return 0.0;
+        if (!closed_points_.empty()) {
+            return interpolate(closed_points_, rpm);
+        }
+        static bool logged = false;  // ponytail: process-wide once flag, per-instance if multi-engine logs matter
+        if (!logged) {
+            logged = true;
+            std::cerr << "[engine] torque_closed_curve not set: using motoring estimate "
+                         "T_closed = -0.08*T_peak*rpm/rpm_peak (not measured)" << std::endl;
+        }
+        return -0.08 * get_peak_torque() * rpm / get_peak_torque_rpm();
+    }
+
     /// @brief ピークトルクRPMを取得
     double get_peak_torque_rpm() const {
         if (torque_points_.empty()) return 0.0;
@@ -88,27 +154,22 @@ public:
 private:
     std::vector<double> rpm_points_;
     std::vector<double> torque_points_;
-    
-    /// 線形補間
-    double interpolate(double rpm) const {
-        // 範囲外チェック（既にクランプされている前提）
-        if (rpm <= rpm_points_.front()) return torque_points_.front();
-        if (rpm >= rpm_points_.back()) return torque_points_.back();
-        
-        // 二分探索で区間を特定
-        auto it = std::lower_bound(rpm_points_.begin(), rpm_points_.end(), rpm);
-        size_t idx = std::distance(rpm_points_.begin(), it);
-        
-        if (idx == 0) return torque_points_[0];
-        
-        // 線形補間
-        double rpm0 = rpm_points_[idx - 1];
-        double rpm1 = rpm_points_[idx];
-        double torque0 = torque_points_[idx - 1];
-        double torque1 = torque_points_[idx];
-        
-        double t = (rpm - rpm0) / (rpm1 - rpm0);
-        return torque0 + t * (torque1 - torque0);
+    std::vector<double> closed_points_;     // 閉スロットル曲線（空 = 既定推定）
+    std::vector<double> throttle_points_;   // 2D マップのスロットル軸（空 = 1D 混合）
+    std::vector<double> table_;             // rpm 行 × throttle 列（行優先）
+
+    /// 区間インデックスと重み（範囲外は端にクランプ）
+    static std::pair<size_t, double> locate(const std::vector<double>& x, double v) {
+        if (v <= x.front()) return {0, 0.0};
+        if (v >= x.back()) return {x.size() - 2, 1.0};
+        const size_t i = static_cast<size_t>(std::upper_bound(x.begin(), x.end(), v) - x.begin()) - 1;
+        return {i, (v - x[i]) / (x[i + 1] - x[i])};
+    }
+
+    /// rpm_points_ 上の 1D 線形補間
+    double interpolate(const std::vector<double>& y, double rpm) const {
+        const auto [i, w] = locate(rpm_points_, rpm);
+        return y[i] + w * (y[i + 1] - y[i]);
     }
 };
 
@@ -117,42 +178,7 @@ private:
 /// ピークトルク: 約63 Nm @ 12,500 rpm
 inline EngineTorqueMap create_cbr600rr_engine() {
     EngineTorqueMap engine;
-    
-    // RPMポイント
-    std::vector<double> rpm = {
-        1000,   // アイドリング
-        3000,
-        5000,
-        7000,
-        9000,
-        10000,
-        11000,
-        12000,
-        12500,  // ピーク
-        13000,
-        13500,
-        14000,
-        14500   // レッドライン
-    };
-    
-    // トルク [Nm]
-    std::vector<double> torque = {
-        35,     // アイドリング
-        40,
-        48,
-        54,
-        60,
-        61,
-        62,
-        62.5,
-        63,     // ピーク
-        62,
-        60,
-        57,
-        55      // レッドライン
-    };
-    
-    engine.set_curve(rpm, torque);
+    engine.set_curve(kCbr600rrRpm, kCbr600rrTorque);
     return engine;
 }
 

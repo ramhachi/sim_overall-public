@@ -1,23 +1,38 @@
 #pragma once
 /// @file aero_map_4d.hpp
 /// @brief 4次元エアロマップ（RHf, RHr, roll, yaw）
-/// 
-/// 設計書 Section 6 準拠
+///
+/// 本番経路は「設計目標値（target aero）から作る解析マップ」（coefficient モード）。
+/// CL·A, CD·A, 空力バランス, h_aero, RH/roll/yaw 感度, DRS ON 目標を AeroMapParams で明示し、
+/// set_coefficient_defaults() で格子を再生成する。これらは設計目標であり実測ではない。
+/// 実測（CFD/風洞）マップ JSON を load_from_json() で与えた場合はそれが目標値を上書きする。
+///
 /// 入力変数:
 ///   - RH_f: フロントライドハイト [mm]
 ///   - RH_r: リアライドハイト [mm]
 ///   - roll: ロール角 [rad]
 ///   - yaw:  エアロヨー角 [rad]
+/// 域外入力は格子端にクランプし、out_of_domain ビット（bit0 RHf, bit1 RHr, bit2 roll, bit3 yaw）と
+/// out_of_domain_count() で通知する。
+/// 座標: 力 Fx, Fy は SAE 車体系（X 前, Y 右）、Fz は揚力正（負 = ダウンフォース）。
+/// モーメントは CG 回り（SAE: Mx ロール, My ピッチ ノーズアップ正, Mz ヨー）。
+///
+/// ponytail: 速度軸（Re 依存）なし、純 V² スケール。必要になったら 5 軸目 V か dCL/dlnV 補正配列を追加。
 
 #include <vector>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <algorithm>
 #include <fstream>
+#include <limits>
+#include <initializer_list>
 #include <string>
+#include <tuple>
 #include <utility>
 
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 
 namespace fsae::physics::aero {
 
@@ -27,9 +42,10 @@ struct AeroOutput {
     Scalar CL = 0;      // リフト係数（負=ダウンフォース）
     Scalar CD = 0;      // ドラッグ係数
     Scalar CY = 0;      // サイドフォース係数
-    Scalar Cm = 0;      // ピッチングモーメント係数
-    Scalar CoP_x = 0;   // 空力中心X位置 [m from rear axle]
-    Scalar CoP_dist = 0.5; // 前後DF配分 (0=リア, 1=フロント)
+    Scalar Cm = 0;      // ピッチングモーメント係数（鉛直力分のみ）
+    Scalar CoP_x = 0;   // 鉛直力の圧力中心 X [m from rear axle]（前輪配分 = CoP_x / L_ref）
+    Scalar CoP_y_x = 0; // 横力の圧力中心 X [m from rear axle]
+    std::uint8_t out_of_domain = 0;  // 域外ビット（bit0 RHf, bit1 RHr, bit2 roll, bit3 yaw）
 };
 
 /// 空力・モーメント出力
@@ -38,30 +54,55 @@ struct AeroForces {
     Scalar Fx = 0;      // ドラッグ [N] (負=後方)
     Scalar Fy = 0;      // サイドフォース [N]
     Scalar Fz = 0;      // リフト [N] (負=ダウンフォース)
-    Scalar Mx = 0;      // ロールモーメント [Nm]
-    Scalar My = 0;      // ピッチモーメント [Nm]
-    Scalar Mz = 0;      // ヨーモーメント [Nm]
-    
-    // 前後輪へのダウンフォース配分
+    Scalar Mx = 0;      // ロールモーメント [Nm]（CG 回り）
+    Scalar My = 0;      // ピッチモーメント [Nm]（CG 回り）
+    Scalar Mz = 0;      // ヨーモーメント [Nm]（CG 回り）
+
+    // 前後輪へのダウンフォース配分（鉛直 CoP から導出）
     Scalar Fz_front = 0;
     Scalar Fz_rear = 0;
+    std::uint8_t out_of_domain = 0;
 };
 
 /// 4Dエアロマップパラメータ
 template<typename Scalar = double>
 struct AeroMapParams {
     Scalar rho = 1.225;             // 空気密度 [kg/m³]
-    Scalar A_ref = 1.0;             // 参照面積 [m²]
-    Scalar L_ref = 1.6;             // 参照長さ（ホイールベース）[m]
-    Scalar x_cg = 0.8;              // CG位置 [m from rear axle]
+    Scalar A_ref = 1.0;             // 参照面積 [m²]（1 のとき CL/CD は CL·A/CD·A）
+    Scalar L_ref = 1.6;             // 参照長さ = ホイールベース [m]
+    Scalar x_cg = 0.8;              // CG 位置 [m from rear axle]
+    Scalar h_cg = 0.28;             // CG 高さ [m above ground]
     Scalar reference_speed = 15.0;  // 参照速度 [m/s]
     Scalar reference_density = 1.225; // 参照密度 [kg/m³]
     bool use_direct_load_map = false;
-     
-    // デフォルト係数（マップがない場合）
-    Scalar CL_default = -2.5;
-    Scalar CD_default = 1.0;
-    Scalar CoP_default = 0.45;      // 基準圧力中心
+
+    // ---- 設計目標（解析マップ生成用、実測ではない）----
+    Scalar CL_default = -2.5;       // CL（A_ref=1 なら −CL·A）@ 公称姿勢
+    Scalar CD_default = 1.0;        // CD（A_ref=1 なら CD·A）@ 公称姿勢
+    Scalar CoP_default = 0.45;      // 空力バランス（前輪配分）→ CoP_x = CoP_default·L_ref
+    Scalar h_aero = 0.35;           // ドラッグ / 横力の作用高さ [m above ground]
+    Scalar rh_f_nominal = 40.0;     // 感度の基準 RH [mm]
+    Scalar rh_r_nominal = 55.0;
+    Scalar dCL_drh_f = 0.015;       // 前 RH 1 mm 低下あたりの CL 相対増 [1/mm]
+    Scalar dCL_drh_r = 0.010;       // 後 RH 1 mm 低下あたりの CL 相対増 [1/mm]
+    Scalar CL_rh_min = 0.6;         // RH 効果の倍率下限 / 上限
+    Scalar CL_rh_max = 1.4;
+    Scalar roll_CL_loss = 3.0;      // ロール 1 rad あたりの CL 相対損失（下限 0.7 倍）[1/rad]
+    Scalar yaw_CL_freq = 2.0;       // CL ∝ cos(k·yaw)（下限 0.6 倍）
+    Scalar yaw_CD_quad = 2.0;       // CD ∝ 1 + k·yaw² [1/rad²]
+    Scalar yaw_CY_gain = 0.5;       // CY = k·sin(2·yaw)
+    Scalar dCoP_drh_f = -0.003;     // 前 RH 1 mm 増での CoP_x 変化 [m/mm]（前を下げるとバランス前進）
+    Scalar dCoP_drh_r = 0.002;      // 後 RH 1 mm 増での CoP_x 変化 [m/mm]（後を下げるとバランス後退）
+
+    // ---- DRS ON 目標（マップに drs_on ブロックが無い場合に使用）----
+    Scalar drs_CL_ratio = 0.54;     // CL_on / CL_off
+    Scalar drs_CD_ratio = 0.74;     // CD_on / CD_off
+    /// CoP_x 変化 [m]。NaN = リアウイングのみの DRS 規則：除去 DF (1−r)·Fz をリア車軸位置に置くと
+    /// フロント DF 不変 → CoP_on = CoP_off / drs_CL_ratio（≤ L_ref にクランプ）
+    Scalar drs_CoP_x_shift = std::numeric_limits<Scalar>::quiet_NaN();
+    Scalar drs_side_moment_ratio = 0.70; // direct-load の Mx/Mz 倍率
+
+    // 公称既定（direct-load）
     Scalar Fx_default = -80.0;      // [N] at reference speed
     Scalar Fy_default = 0.0;        // [N] at reference speed
     Scalar Fz_default = -350.0;     // [N] at reference speed
@@ -87,13 +128,13 @@ public:
         init_default_grid();
         init_sample_data();
     }
-    
+
     explicit AeroMap4D(const AeroMapParams<Scalar>& params)
         : params_(params) {
         init_default_grid();
         init_sample_data();
     }
-    
+
     /// 空力係数を計算（4D補間 + DRS対応）
     AeroOutput<Scalar> compute(
         Scalar rh_front_mm,         // フロントライドハイト [mm]
@@ -102,134 +143,80 @@ public:
         Scalar yaw_rad,             // エアロヨー角 [rad]
         bool drs_active = false) const  // DRS起動フラグ
     {
-        // グリッド範囲にクランプ
-        rh_front_mm = clamp(rh_front_mm, grid_.rh_f.front(), grid_.rh_f.back());
-        rh_rear_mm = clamp(rh_rear_mm, grid_.rh_r.front(), grid_.rh_r.back());
-        roll_rad = clamp(roll_rad, grid_.roll.front(), grid_.roll.back());
-        yaw_rad = clamp(yaw_rad, grid_.yaw.front(), grid_.yaw.back());
+        const Cell c = locate(rh_front_mm, rh_rear_mm, roll_rad, yaw_rad);
+        const Tables& t = (drs_active && has_drs_table_) ? drs_ : off_;
 
-        // インデックスと重みを計算
-        auto [i_f, w_f] = find_index_weight(grid_.rh_f, rh_front_mm);
-        auto [i_r, w_r] = find_index_weight(grid_.rh_r, rh_rear_mm);
-        auto [i_roll, w_roll] = find_index_weight(grid_.roll, roll_rad);
-        auto [i_yaw, w_yaw] = find_index_weight(grid_.yaw, yaw_rad);
-
-        // 4D線形補間
         AeroOutput<Scalar> out;
-        out.CL = interpolate_4d(CL_data_, i_f, i_r, i_roll, i_yaw, w_f, w_r, w_roll, w_yaw);
-        out.CD = interpolate_4d(CD_data_, i_f, i_r, i_roll, i_yaw, w_f, w_r, w_roll, w_yaw);
-        out.CY = interpolate_4d(CY_data_, i_f, i_r, i_roll, i_yaw, w_f, w_r, w_roll, w_yaw);
-        out.CoP_x = interpolate_4d(CoP_x_data_, i_f, i_r, i_roll, i_yaw, w_f, w_r, w_roll, w_yaw);
-        out.CoP_dist = interpolate_4d(CoP_dist_data_, i_f, i_r, i_roll, i_yaw, w_f, w_r, w_roll, w_yaw);
+        out.out_of_domain = c.ood;
+        out.CL = interp(t.CL, c);
+        out.CD = interp(t.CD, c);
+        out.CY = interp(t.CY, c);
+        out.CoP_x = interp(t.CoP_x, c);
+        out.CoP_y_x = interp(t.CoP_y_x, c);
 
-        // ピッチモーメント係数
-        out.Cm = out.CL * (out.CoP_x - params_.x_cg) / params_.L_ref;
-
-        // DRS起動時は空力係数を減少（4D補間後に乗算）
-        if (drs_active) {
-            out.CL *= Scalar(0.54);  // -46% ダウンフォース（リアウイング開放）
-            out.CD *= Scalar(0.74);  // -26% 空気抵抗
-            // CY, CoP_x, CoP_dist は変化なし
+        if (drs_active && !has_drs_table_) {
+            out.CoP_x = drs_cop_on(out.CoP_x);
+            out.CL *= params_.drs_CL_ratio;
+            out.CD *= params_.drs_CD_ratio;
         }
 
+        out.Cm = out.CL * (out.CoP_x - params_.x_cg) / params_.L_ref;
         return out;
     }
-    
-    /// 力とモーメントを計算（DRS対応）
+
+    /// 力とモーメント（CG 回り）を計算
+    /// @param drs_frac DRS フラップ位置 [0-1]（bool 可。中間値は OFF/ON の線形ブレンド）
     AeroForces<Scalar> compute_forces(
         Scalar velocity,            // 車速 [m/s]
         Scalar rh_front_mm,         // フロントライドハイト [mm]
         Scalar rh_rear_mm,          // リアライドハイト [mm]
         Scalar roll_rad,            // ロール角 [rad]
         Scalar yaw_rad,             // エアロヨー角 [rad]
-        bool drs_active = false) const  // DRS起動フラグ
+        Scalar drs_frac = Scalar(0)) const
     {
-        if (params_.use_direct_load_map) {
-            rh_front_mm = clamp(rh_front_mm, grid_.rh_f.front(), grid_.rh_f.back());
-            rh_rear_mm = clamp(rh_rear_mm, grid_.rh_r.front(), grid_.rh_r.back());
-            roll_rad = clamp(roll_rad, grid_.roll.front(), grid_.roll.back());
-            yaw_rad = clamp(yaw_rad, grid_.yaw.front(), grid_.yaw.back());
-
-            auto [i_f, w_f] = find_index_weight(grid_.rh_f, rh_front_mm);
-            auto [i_r, w_r] = find_index_weight(grid_.rh_r, rh_rear_mm);
-            auto [i_roll, w_roll] = find_index_weight(grid_.roll, roll_rad);
-            auto [i_yaw, w_yaw] = find_index_weight(grid_.yaw, yaw_rad);
-
-            AeroForces<Scalar> f;
-            f.Fx = interpolate_4d(Fx_ref_data_, i_f, i_r, i_roll, i_yaw, w_f, w_r, w_roll, w_yaw);
-            f.Fy = interpolate_4d(Fy_ref_data_, i_f, i_r, i_roll, i_yaw, w_f, w_r, w_roll, w_yaw);
-            f.Fz = interpolate_4d(Fz_ref_data_, i_f, i_r, i_roll, i_yaw, w_f, w_r, w_roll, w_yaw);
-            f.Mx = interpolate_4d(Mx_ref_data_, i_f, i_r, i_roll, i_yaw, w_f, w_r, w_roll, w_yaw);
-            f.My = interpolate_4d(My_ref_data_, i_f, i_r, i_roll, i_yaw, w_f, w_r, w_roll, w_yaw);
-            f.Mz = interpolate_4d(Mz_ref_data_, i_f, i_r, i_roll, i_yaw, w_f, w_r, w_roll, w_yaw);
-
-            const Scalar reference_speed = std::max(params_.reference_speed, Scalar(0.1));
-            const Scalar reference_density = std::max(params_.reference_density, Scalar(0.1));
-            const Scalar density_ratio = params_.rho / reference_density;
-            const Scalar speed_ratio_sq = (velocity * velocity) / (reference_speed * reference_speed);
-            const Scalar scale = density_ratio * speed_ratio_sq;
-
-            f.Fx *= scale;
-            f.Fy *= scale;
-            f.Fz *= scale;
-            f.Mx *= scale;
-            f.My *= scale;
-            f.Mz *= scale;
-
-            if (drs_active) {
-                f.Fx *= Scalar(0.74);
-                f.Fz *= Scalar(0.54);
-                f.My *= Scalar(0.54);
-                f.Mx *= Scalar(0.70);
-                f.Mz *= Scalar(0.70);
-            }
-
-            // direct-load モードでは前後配分は現時点では単純配分に留める
-            const Scalar front_ratio = clamp(Scalar(0.5), Scalar(0.0), Scalar(1.0));
-            f.Fz_front = f.Fz * front_ratio;
-            f.Fz_rear = f.Fz * (Scalar(1.0) - front_ratio);
-            return f;
+        if (drs_frac <= Scalar(0) || drs_frac >= Scalar(1)) {
+            return compute_forces_binary(velocity, rh_front_mm, rh_rear_mm, roll_rad, yaw_rad,
+                                         drs_frac >= Scalar(1));
         }
-
-        // 動圧
-        Scalar q = Scalar(0.5) * params_.rho * velocity * velocity;
-
-        // 係数取得（DRSフラグを渡す）
-        auto coef = compute(rh_front_mm, rh_rear_mm, roll_rad, yaw_rad, drs_active);
-        
-        // 力計算
-        AeroForces<Scalar> f;
-        f.Fx = -q * params_.A_ref * coef.CD;  // ドラッグ（後方）
-        f.Fy = q * params_.A_ref * coef.CY;   // サイドフォース
-        f.Fz = q * params_.A_ref * coef.CL;   // リフト（ダウンフォースは負）
-        
-        // モーメント計算
-        Scalar lever_arm = coef.CoP_x - params_.x_cg;
-        f.My = f.Fz * lever_arm;  // ピッチモーメント
-        
-        // ヨー角によるモーメント
-        f.Mz = f.Fy * lever_arm;
-        
-        // 前後荷重配分
-        f.Fz_front = f.Fz * coef.CoP_dist;
-        f.Fz_rear = f.Fz * (Scalar(1.0) - coef.CoP_dist);
-        
-        return f;
+        auto a = compute_forces_binary(velocity, rh_front_mm, rh_rear_mm, roll_rad, yaw_rad, false);
+        const auto b = compute_forces_binary(velocity, rh_front_mm, rh_rear_mm, roll_rad, yaw_rad, true);
+        const Scalar w = drs_frac;
+        for (auto [p, q] : std::initializer_list<std::pair<Scalar*, const Scalar*>>{
+                 {&a.Fx, &b.Fx}, {&a.Fy, &b.Fy}, {&a.Fz, &b.Fz}, {&a.Mx, &b.Mx},
+                 {&a.My, &b.My}, {&a.Mz, &b.Mz}, {&a.Fz_front, &b.Fz_front}, {&a.Fz_rear, &b.Fz_rear}}) {
+            *p += w * (*q - *p);
+        }
+        return a;
     }
-    
+
+    /// 基準点まわりのモーメントを CG まわりへ移す：M_cg = M_ref + (r_ref − r_cg) × F
+    /// @param dx,dy,dz r_ref − r_cg（SAE 車体系: X 前, Y 右, Z 下）[m]
+    /// f.Fz は揚力正なので SAE の Fz = −f.Fz として扱う。
+    static void transfer_moments(AeroForces<Scalar>& f, Scalar dx, Scalar dy, Scalar dz) {
+        const Scalar fz = -f.Fz;
+        f.Mx += dy * fz - dz * f.Fy;
+        f.My += dz * f.Fx - dx * fz;
+        f.Mz += dx * f.Fy - dy * f.Fx;
+    }
+
     /// ライドハイトをサスペンション変位から計算
-    static Scalar compute_ride_height(Scalar z_sprung, Scalar z_u, 
+    static Scalar compute_ride_height(Scalar z_sprung, Scalar z_u,
                                       Scalar static_rh_mm, Scalar wheel_radius) {
         (void)wheel_radius;
         // z は下向き正なので、ばね上-ばね下の増加は ride height 低下を意味する
         return static_rh_mm - (z_sprung - z_u) * Scalar(1000.0);
     }
-    
-    /// パラメータアクセス
+
+    /// パラメータアクセス（目標値を変えたら set_coefficient_defaults() で再生成すること）
     AeroMapParams<Scalar>& params() { return params_; }
     const AeroMapParams<Scalar>& params() const { return params_; }
     const AeroMapGrid<Scalar>& grid() const { return grid_; }
     bool uses_direct_load_map() const { return params_.use_direct_load_map; }
+    bool has_drs_table() const { return has_drs_table_; }
+    /// 直近の load_from_json 失敗理由（成功時は空）
+    const std::string& last_error() const { return last_error_; }
+    /// 域外（クランプ）評価の累計回数
+    std::uint64_t out_of_domain_count() const { return ood_count_; }
 
     void set_reference_conditions(Scalar reference_speed, Scalar reference_density) {
         params_.reference_speed = std::max(reference_speed, Scalar(0.1));
@@ -247,19 +234,138 @@ public:
         init_direct_load_data();
     }
 
-    void set_coefficient_defaults(Scalar cl, Scalar cd, Scalar cop_dist = Scalar(0.45)) {
+    /// 目標 CL/CD/バランスを設定し、params() の感度目標から解析マップを再生成
+    void set_coefficient_defaults(Scalar cl, Scalar cd, Scalar balance_front = Scalar(0.45)) {
         params_.CL_default = cl;
         params_.CD_default = cd;
-        params_.CoP_default = cop_dist;
+        params_.CoP_default = balance_front;
         params_.use_direct_load_map = false;
         init_sample_data();
     }
 
+    /// 実測マップ JSON を読み込み、目標値マップを上書きする。
+    /// 失敗時は false を返し、理由を last_error() と info ログに残す（自身は変更しない）。
+    /// 書式: {aero_map: {V_ref_mps, reference_density, axes{rh_front_mm, rh_rear_mm, roll_rad|roll_deg,
+    ///   yaw_rad|yaw_deg}, reference_point{x_from_rear_axle_m, y_m, height_m}?, data{...}, drs_on{...}?}}
+    ///   data: direct-load {Fx_N,Fy_N,Fz_N,Mx_Nm,My_Nm,Mz_Nm} または係数 {CL,CD,CY,CoP_x, CoP_y_x?}
+    ///   reference_point: direct-load モーメントの基準点（無ければ CG 回りとみなす）
+    ///   drs_on: data と同じキーの任意部分集合（DRS ON 時に置換）
     bool load_from_json(const std::string& filepath) {
+        last_error_ = load_impl(filepath);
+        if (!last_error_.empty()) {
+            spdlog::info("aero map '{}' not loaded ({}); using target-aero map", filepath, last_error_);
+            return false;
+        }
+        spdlog::info("aero map '{}' loaded ({} mode{}), overrides target-aero coefficients", filepath,
+                     params_.use_direct_load_map ? "direct-load" : "coefficient",
+                     has_drs_table_ ? ", with drs_on" : "");
+        return true;
+    }
+
+private:
+    struct Tables {
+        std::vector<Scalar> CL, CD, CY, CoP_x, CoP_y_x;
+        std::vector<Scalar> Fx, Fy, Fz, Mx, My, Mz;
+    };
+    struct Cell {
+        std::array<size_t, 4> i{};
+        std::array<Scalar, 4> w{};
+        std::uint8_t ood = 0;
+    };
+
+    AeroMapParams<Scalar> params_;
+    AeroMapGrid<Scalar> grid_;
+    Tables off_;
+    Tables drs_;
+    bool has_drs_table_ = false;
+    bool has_ref_point_ = false;
+    std::array<Scalar, 3> ref_point_{};   // {x from rear axle, y, height above ground} [m]
+    std::string last_error_;
+    // ponytail: 非アトミックな診断カウンタ（1 インスタンス 1 スレッド前提）、共有するなら std::atomic へ
+    mutable std::uint64_t ood_count_ = 0;
+
+    AeroForces<Scalar> compute_forces_binary(Scalar velocity, Scalar rh_front_mm, Scalar rh_rear_mm,
+                                             Scalar roll_rad, Scalar yaw_rad, bool drs_active) const {
+        AeroForces<Scalar> f;
+        const Scalar dh = params_.h_aero - params_.h_cg;   // ドラッグ / 横力の CG 上方高さ
+        if (params_.use_direct_load_map) {
+            const Cell c = locate(rh_front_mm, rh_rear_mm, roll_rad, yaw_rad);
+            const Tables& t = (drs_active && has_drs_table_) ? drs_ : off_;
+            f.out_of_domain = c.ood;
+            f.Fx = interp(t.Fx, c);
+            f.Fy = interp(t.Fy, c);
+            f.Fz = interp(t.Fz, c);
+            f.Mx = interp(t.Mx, c);
+            f.My = interp(t.My, c);
+            f.Mz = interp(t.Mz, c);
+
+            const Scalar reference_speed = std::max(params_.reference_speed, Scalar(0.1));
+            const Scalar reference_density = std::max(params_.reference_density, Scalar(0.1));
+            const Scalar scale = (params_.rho / reference_density) *
+                                 (velocity * velocity) / (reference_speed * reference_speed);
+            for (Scalar* v : {&f.Fx, &f.Fy, &f.Fz, &f.Mx, &f.My, &f.Mz}) *v *= scale;
+
+            if (has_ref_point_) {
+                transfer_moments(f, ref_point_[0] - params_.x_cg, ref_point_[1],
+                                 -(ref_point_[2] - params_.h_cg));
+            }
+
+            // 鉛直 CoP（CG 相対, My ≈ Δx·Fz とみなす）
+            Scalar x_rel = std::abs(f.Fz) > Scalar(1e-9) ? f.My / f.Fz : Scalar(0);
+            if (drs_active && !has_drs_table_) {
+                const Scalar fz_on = f.Fz * params_.drs_CL_ratio;
+                const Scalar x_rel_on = drs_cop_on(params_.x_cg + x_rel) - params_.x_cg;
+                f.My += x_rel_on * fz_on - x_rel * f.Fz;
+                f.Fz = fz_on;
+                f.Fx *= params_.drs_CD_ratio;
+                f.Mx *= params_.drs_side_moment_ratio;
+                f.Mz *= params_.drs_side_moment_ratio;
+                x_rel = x_rel_on;
+            }
+            set_axle_split(f, params_.x_cg + x_rel);
+            return f;
+        }
+
+        const Scalar q = Scalar(0.5) * params_.rho * velocity * velocity;
+        const auto coef = compute(rh_front_mm, rh_rear_mm, roll_rad, yaw_rad, drs_active);
+        f.out_of_domain = coef.out_of_domain;
+        f.Fx = -q * params_.A_ref * coef.CD;  // ドラッグ（後方）
+        f.Fy = q * params_.A_ref * coef.CY;   // サイドフォース
+        f.Fz = q * params_.A_ref * coef.CL;   // リフト（ダウンフォースは負）
+
+        // 鉛直力は (CoP_x, h_aero 不問)、ドラッグは h_aero、横力は (CoP_y_x, h_aero) に作用
+        f.Mx = dh * f.Fy;
+        f.My = (coef.CoP_x - params_.x_cg) * f.Fz - dh * f.Fx;
+        f.Mz = (coef.CoP_y_x - params_.x_cg) * f.Fy;
+        set_axle_split(f, coef.CoP_x);
+        return f;
+    }
+
+    void set_axle_split(AeroForces<Scalar>& f, Scalar cop_x_from_rear) const {
+        const Scalar front = std::clamp(cop_x_from_rear / params_.L_ref, Scalar(0), Scalar(1));
+        f.Fz_front = f.Fz * front;
+        f.Fz_rear = f.Fz - f.Fz_front;
+    }
+
+    /// DRS ON 時の鉛直 CoP [m from rear axle]（drs_on データが無い場合の目標/規則）
+    Scalar drs_cop_on(Scalar cop_off) const {
+        if (!std::isnan(params_.drs_CoP_x_shift)) {
+            return cop_off + params_.drs_CoP_x_shift;
+        }
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            spdlog::info("DRS: no drs_on data / CoP target; rear-wing-only rule CoP_on = CoP_off / {:.2f}",
+                         static_cast<double>(params_.drs_CL_ratio));
+        }
+        return std::min(cop_off / std::max(params_.drs_CL_ratio, Scalar(1e-3)), params_.L_ref);
+    }
+
+    std::string load_impl(const std::string& filepath) {
         try {
             std::ifstream file(filepath);
             if (!file.is_open()) {
-                return false;
+                return "cannot open file";
             }
 
             nlohmann::json root;
@@ -267,6 +373,8 @@ public:
             const auto& config = root.contains("aero_map") ? root["aero_map"] : root;
 
             AeroMap4D<Scalar> loaded(*this);
+            loaded.has_drs_table_ = false;
+            loaded.has_ref_point_ = false;
 
             if (config.contains("V_ref_mps")) {
                 loaded.params_.reference_speed = config["V_ref_mps"];
@@ -274,95 +382,107 @@ public:
             if (config.contains("reference_density")) {
                 loaded.params_.reference_density = config["reference_density"];
             }
+            if (config.contains("reference_point")) {
+                const auto& rp = config["reference_point"];
+                for (const char* k : {"x_from_rear_axle_m", "y_m", "height_m"}) {
+                    if (!rp.contains(k)) return std::string("reference_point missing '") + k + "'";
+                }
+                loaded.ref_point_ = {rp["x_from_rear_axle_m"].get<Scalar>(), rp["y_m"].get<Scalar>(),
+                                     rp["height_m"].get<Scalar>()};
+                loaded.has_ref_point_ = true;
+            }
 
             if (config.contains("axes")) {
                 const auto& axes = config["axes"];
+                auto deg_axis = [&](const char* rad, const char* deg, std::vector<Scalar>& dst) {
+                    if (axes.contains(rad)) {
+                        dst = axes[rad].template get<std::vector<Scalar>>();
+                    } else if (axes.contains(deg)) {
+                        dst.clear();
+                        for (auto v : axes[deg].template get<std::vector<Scalar>>()) dst.push_back(v * Scalar(M_PI / 180.0));
+                    }
+                };
                 if (axes.contains("rh_front_mm")) loaded.grid_.rh_f = axes["rh_front_mm"].get<std::vector<Scalar>>();
                 if (axes.contains("rh_rear_mm")) loaded.grid_.rh_r = axes["rh_rear_mm"].get<std::vector<Scalar>>();
-                if (axes.contains("roll_rad")) loaded.grid_.roll = axes["roll_rad"].get<std::vector<Scalar>>();
-                else if (axes.contains("roll_deg")) {
-                    auto roll_deg = axes["roll_deg"].get<std::vector<Scalar>>();
-                    loaded.grid_.roll.clear();
-                    for (auto value : roll_deg) loaded.grid_.roll.push_back(value * Scalar(M_PI / 180.0));
-                }
-                if (axes.contains("yaw_rad")) loaded.grid_.yaw = axes["yaw_rad"].get<std::vector<Scalar>>();
-                else if (axes.contains("yaw_deg")) {
-                    auto yaw_deg = axes["yaw_deg"].get<std::vector<Scalar>>();
-                    loaded.grid_.yaw.clear();
-                    for (auto value : yaw_deg) loaded.grid_.yaw.push_back(value * Scalar(M_PI / 180.0));
-                }
+                deg_axis("roll_rad", "roll_deg", loaded.grid_.roll);
+                deg_axis("yaw_rad", "yaw_deg", loaded.grid_.yaw);
             }
 
-            if (!loaded.has_valid_interpolation_grid()) {
-                return false;
+            const std::pair<const char*, const std::vector<Scalar>*> axes_list[] = {
+                {"rh_front_mm", &loaded.grid_.rh_f}, {"rh_rear_mm", &loaded.grid_.rh_r},
+                {"roll", &loaded.grid_.roll}, {"yaw", &loaded.grid_.yaw}};
+            for (const auto& [name, ax] : axes_list) {
+                if (ax->size() < 2) return std::string("axis '") + name + "' needs >= 2 points";
+                for (size_t i = 1; i < ax->size(); ++i) {
+                    if ((*ax)[i] <= (*ax)[i - 1]) return std::string("axis '") + name + "' not strictly ascending";
+                }
             }
 
             loaded.allocate_data();
-
-            const auto& data = config.contains("data") ? config["data"] : config;
             const size_t expected_size = loaded.expected_data_size();
-            auto load_vector = [&](const char* key, std::vector<Scalar>& dst) -> bool {
-                if (!data.contains(key) || !data[key].is_array()) {
-                    return false;
-                }
-                auto values = data[key].get<std::vector<Scalar>>();
+            const auto& data = config.contains("data") ? config["data"] : config;
+
+            // 戻り値: "" = 成功, "absent" = キー無し, それ以外 = 形状エラー
+            auto load_vector = [&](const nlohmann::json& src, const char* key,
+                                   std::vector<Scalar>& dst) -> std::string {
+                if (!src.contains(key)) return "absent";
+                if (!src[key].is_array()) return std::string("'") + key + "' is not an array";
+                auto values = src[key].template get<std::vector<Scalar>>();
                 if (values.size() != expected_size) {
-                    return false;
+                    return std::string("'") + key + "' has " + std::to_string(values.size()) +
+                           " values, expected " + std::to_string(expected_size) + " (= nRHf*nRHr*nRoll*nYaw)";
                 }
                 dst = std::move(values);
-                return true;
+                return "";
+            };
+            auto load_set = [&](const nlohmann::json& src, Tables& t, bool direct, bool optional) -> std::string {
+                using Keys = std::vector<std::pair<const char*, std::vector<Scalar>*>>;
+                const Keys keys = direct
+                    ? Keys{{"Fx_N", &t.Fx}, {"Fy_N", &t.Fy}, {"Fz_N", &t.Fz},
+                           {"Mx_Nm", &t.Mx}, {"My_Nm", &t.My}, {"Mz_Nm", &t.Mz}}
+                    : Keys{{"CL", &t.CL}, {"CD", &t.CD}, {"CY", &t.CY}, {"CoP_x", &t.CoP_x}};
+                for (const auto& [key, dst] : keys) {
+                    const std::string err = load_vector(src, key, *dst);
+                    if (err == "absent" && optional) continue;
+                    if (!err.empty()) return err == "absent" ? std::string("missing '") + key + "'" : err;
+                }
+                return "";
             };
 
-            const bool has_direct_data =
-                load_vector("Fx_N", loaded.Fx_ref_data_) &&
-                load_vector("Fy_N", loaded.Fy_ref_data_) &&
-                load_vector("Fz_N", loaded.Fz_ref_data_) &&
-                load_vector("Mx_Nm", loaded.Mx_ref_data_) &&
-                load_vector("My_Nm", loaded.My_ref_data_) &&
-                load_vector("Mz_Nm", loaded.Mz_ref_data_);
-
-            if (has_direct_data) {
-                loaded.params_.use_direct_load_map = true;
-                *this = std::move(loaded);
-                return true;
+            const bool direct = data.contains("Fx_N");
+            if (const auto err = load_set(data, loaded.off_, direct, false); !err.empty()) {
+                return (direct ? "direct-load data: " : "coefficient data: ") + err;
+            }
+            if (!direct) {
+                const auto err = load_vector(data, "CoP_y_x", loaded.off_.CoP_y_x);
+                if (err == "absent") loaded.off_.CoP_y_x = loaded.off_.CoP_x;
+                else if (!err.empty()) return "coefficient data: " + err;
+            }
+            if (data.contains("CoP_dist")) {
+                spdlog::warn("aero map: 'CoP_dist' is ignored (front balance = CoP_x / L_ref)");
             }
 
-            const bool has_coeff_data =
-                load_vector("CL", loaded.CL_data_) &&
-                load_vector("CD", loaded.CD_data_) &&
-                load_vector("CY", loaded.CY_data_) &&
-                load_vector("CoP_x", loaded.CoP_x_data_) &&
-                load_vector("CoP_dist", loaded.CoP_dist_data_);
-
-            if (!has_coeff_data) {
-                return false;
+            if (config.contains("drs_on")) {
+                loaded.drs_ = loaded.off_;
+                const auto& drs = config["drs_on"];
+                if (const auto err = load_set(drs, loaded.drs_, direct, true); !err.empty()) {
+                    return "drs_on: " + err;
+                }
+                if (!direct) {
+                    const auto err = load_vector(drs, "CoP_y_x", loaded.drs_.CoP_y_x);
+                    if (!err.empty() && err != "absent") return "drs_on: " + err;
+                }
+                loaded.has_drs_table_ = true;
             }
 
-            loaded.params_.use_direct_load_map = false;
+            loaded.params_.use_direct_load_map = direct;
             *this = std::move(loaded);
-            return true;
-        } catch (const nlohmann::json::exception&) {
-            return false;
+            return "";
+        } catch (const nlohmann::json::exception& e) {
+            return std::string("json error: ") + e.what();
         }
     }
 
-private:
-    AeroMapParams<Scalar> params_;
-    AeroMapGrid<Scalar> grid_;
-    
-    // データ配列（4D）
-    std::vector<Scalar> CL_data_;
-    std::vector<Scalar> CD_data_;
-    std::vector<Scalar> CY_data_;
-    std::vector<Scalar> CoP_x_data_;
-    std::vector<Scalar> CoP_dist_data_;
-    std::vector<Scalar> Fx_ref_data_;
-    std::vector<Scalar> Fy_ref_data_;
-    std::vector<Scalar> Fz_ref_data_;
-    std::vector<Scalar> Mx_ref_data_;
-    std::vector<Scalar> My_ref_data_;
-    std::vector<Scalar> Mz_ref_data_;
-    
     // 4D配列インデックス
     size_t idx(size_t i, size_t j, size_t k, size_t l) const {
         size_t n1 = grid_.rh_r.size();
@@ -370,24 +490,15 @@ private:
         size_t n3 = grid_.yaw.size();
         return ((i * n1 + j) * n2 + k) * n3 + l;
     }
-    
+
     // データ配列確保
     void allocate_data() {
-        size_t total = grid_.rh_f.size() * grid_.rh_r.size() * 
-                       grid_.roll.size() * grid_.yaw.size();
-        CL_data_.resize(total, Scalar(0));
-        CD_data_.resize(total, Scalar(0));
-        CY_data_.resize(total, Scalar(0));
-        CoP_x_data_.resize(total, Scalar(0));
-        CoP_dist_data_.resize(total, Scalar(0.5));
-        Fx_ref_data_.resize(total, params_.Fx_default);
-        Fy_ref_data_.resize(total, params_.Fy_default);
-        Fz_ref_data_.resize(total, params_.Fz_default);
-        Mx_ref_data_.resize(total, params_.Mx_default);
-        My_ref_data_.resize(total, params_.My_default);
-        Mz_ref_data_.resize(total, params_.Mz_default);
+        const size_t total = expected_data_size();
+        for (auto* v : {&off_.CL, &off_.CD, &off_.CY, &off_.CoP_x, &off_.CoP_y_x}) v->assign(total, Scalar(0));
+        init_direct_load_data();
+        has_drs_table_ = false;
     }
-    
+
     // デフォルトグリッド初期化
     void init_default_grid() {
         // フロントRH: 20-60mm (5点)
@@ -396,61 +507,46 @@ private:
         grid_.rh_r = {30, 40, 50, 60, 70, 80};
         // ロール: -5deg〜+5deg (5点)
         constexpr Scalar deg2rad = Scalar(3.14159265359 / 180.0);
-        grid_.roll = {Scalar(-5)*deg2rad, Scalar(-2.5)*deg2rad, Scalar(0), 
+        grid_.roll = {Scalar(-5)*deg2rad, Scalar(-2.5)*deg2rad, Scalar(0),
                       Scalar(2.5)*deg2rad, Scalar(5)*deg2rad};
         // ヨー: -15deg〜+15deg (7点)
-        grid_.yaw = {Scalar(-15)*deg2rad, Scalar(-10)*deg2rad, Scalar(-5)*deg2rad, 
+        grid_.yaw = {Scalar(-15)*deg2rad, Scalar(-10)*deg2rad, Scalar(-5)*deg2rad,
                      Scalar(0), Scalar(5)*deg2rad, Scalar(10)*deg2rad, Scalar(15)*deg2rad};
-        
+
         allocate_data();
     }
-    
-    // サンプルデータ初期化（Formula Student典型値）
+
+    // 設計目標から解析マップを生成（実測ではない）
     void init_sample_data() {
-        // ベース空力係数
-        Scalar CL_base = params_.CL_default;  // -2.5（ダウンフォース）
-        Scalar CD_base = params_.CD_default;  // 1.0
-        Scalar CoP_base = params_.CoP_default; // 0.45
-        
+        const auto& p = params_;
+        has_drs_table_ = false;
+        has_ref_point_ = false;
         for (size_t i = 0; i < grid_.rh_f.size(); ++i) {
-            Scalar rh_f = grid_.rh_f[i];
+            const Scalar rh_f = grid_.rh_f[i];
             for (size_t j = 0; j < grid_.rh_r.size(); ++j) {
-                Scalar rh_r = grid_.rh_r[j];
+                const Scalar rh_r = grid_.rh_r[j];
                 for (size_t k = 0; k < grid_.roll.size(); ++k) {
-                    Scalar roll = grid_.roll[k];
+                    const Scalar roll = grid_.roll[k];
                     for (size_t l = 0; l < grid_.yaw.size(); ++l) {
-                        Scalar yaw = grid_.yaw[l];
-                        
-                        // ライドハイト効果（地面効果）
-                        // 低いほどダウンフォース増加
-                        Scalar rh_effect = Scalar(1.0) + Scalar(0.015) * (Scalar(40) - rh_f) 
-                                         + Scalar(0.010) * (Scalar(55) - rh_r);
-                        rh_effect = clamp(rh_effect, Scalar(0.6), Scalar(1.4));
-                        
+                        const Scalar yaw = grid_.yaw[l];
+
+                        // ライドハイト効果（地面効果: 低いほどダウンフォース増加）
+                        const Scalar rh_effect = std::clamp(
+                            Scalar(1) + p.dCL_drh_f * (p.rh_f_nominal - rh_f) + p.dCL_drh_r * (p.rh_r_nominal - rh_r),
+                            p.CL_rh_min, p.CL_rh_max);
                         // ロール効果（フロアシール損失）
-                        Scalar roll_loss = Scalar(1.0) - Scalar(3.0) * std::abs(roll);
-                        roll_loss = clamp(roll_loss, Scalar(0.7), Scalar(1.0));
-                        
+                        const Scalar roll_loss = std::clamp(Scalar(1) - p.roll_CL_loss * std::abs(roll), Scalar(0.7), Scalar(1));
                         // ヨー効果
-                        Scalar yaw_effect = std::cos(yaw * Scalar(2));
-                        yaw_effect = clamp(yaw_effect, Scalar(0.6), Scalar(1.0));
-                        Scalar CY_val = std::sin(yaw * Scalar(2)) * Scalar(0.5);
-                        
-                        // 最終係数
-                        size_t index = idx(i, j, k, l);
-                        CL_data_[index] = CL_base * rh_effect * roll_loss * yaw_effect;
-                        CD_data_[index] = CD_base * (Scalar(1.0) + Scalar(2.0) * yaw * yaw);
-                        CY_data_[index] = CY_val;
-                        
-                        // 圧力中心
-                        Scalar CoP = CoP_base;
-                        CoP += (rh_f - Scalar(40)) * Scalar(0.003);  // フロント下がるとCoP前進
-                        CoP -= (rh_r - Scalar(55)) * Scalar(0.002);  // リア下がるとCoP後退
-                        CoP_x_data_[index] = CoP;
-                        
-                        // 前後配分
-                        Scalar dist = Scalar(0.5) + (rh_f - rh_r + Scalar(15)) * Scalar(0.003);
-                        CoP_dist_data_[index] = clamp(dist, Scalar(0.35), Scalar(0.65));
+                        const Scalar yaw_effect = std::clamp(Scalar(std::cos(yaw * p.yaw_CL_freq)), Scalar(0.6), Scalar(1));
+
+                        const size_t index = idx(i, j, k, l);
+                        off_.CL[index] = p.CL_default * rh_effect * roll_loss * yaw_effect;
+                        off_.CD[index] = p.CD_default * (Scalar(1) + p.yaw_CD_quad * yaw * yaw);
+                        off_.CY[index] = std::sin(yaw * Scalar(2)) * p.yaw_CY_gain;
+                        off_.CoP_x[index] = p.CoP_default * p.L_ref
+                                          + p.dCoP_drh_f * (rh_f - p.rh_f_nominal)
+                                          + p.dCoP_drh_r * (rh_r - p.rh_r_nominal);
+                        off_.CoP_y_x[index] = off_.CoP_x[index];
                     }
                 }
             }
@@ -458,64 +554,53 @@ private:
     }
 
     void init_direct_load_data() {
-        const size_t total = grid_.rh_f.size() * grid_.rh_r.size() *
-                             grid_.roll.size() * grid_.yaw.size();
-        Fx_ref_data_.assign(total, params_.Fx_default);
-        Fy_ref_data_.assign(total, params_.Fy_default);
-        Fz_ref_data_.assign(total, params_.Fz_default);
-        Mx_ref_data_.assign(total, params_.Mx_default);
-        My_ref_data_.assign(total, params_.My_default);
-        Mz_ref_data_.assign(total, params_.Mz_default);
+        const size_t total = expected_data_size();
+        off_.Fx.assign(total, params_.Fx_default);
+        off_.Fy.assign(total, params_.Fy_default);
+        off_.Fz.assign(total, params_.Fz_default);
+        off_.Mx.assign(total, params_.Mx_default);
+        off_.My.assign(total, params_.My_default);
+        off_.Mz.assign(total, params_.Mz_default);
     }
 
     size_t expected_data_size() const {
         return grid_.rh_f.size() * grid_.rh_r.size() * grid_.roll.size() * grid_.yaw.size();
     }
 
-    bool has_valid_interpolation_grid() const {
-        return grid_.rh_f.size() >= 2
-            && grid_.rh_r.size() >= 2
-            && grid_.roll.size() >= 2
-            && grid_.yaw.size() >= 2;
-    }
-    
-    // クランプ
-    static Scalar clamp(Scalar val, Scalar lo, Scalar hi) {
-        return std::max(lo, std::min(val, hi));
-    }
-    
-    // インデックスと補間重みを計算
+    // インデックスと補間重み（範囲外は端にクランプ）
     static std::pair<size_t, Scalar> find_index_weight(
         const std::vector<Scalar>& grid, Scalar val) {
         if (grid.size() < 2) return {0, Scalar(0)};
         if (val <= grid.front()) return {0, Scalar(0)};
         if (val >= grid.back()) return {grid.size() - 2, Scalar(1)};
-        
-        // 線形探索（小さいグリッドなので）
-        for (size_t i = 0; i < grid.size() - 1; ++i) {
-            if (val >= grid[i] && val <= grid[i + 1]) {
-                Scalar w = (val - grid[i]) / (grid[i + 1] - grid[i]);
-                return {i, w};
-            }
-        }
-        return {grid.size() - 2, Scalar(1)};
+        const size_t i = static_cast<size_t>(std::upper_bound(grid.begin(), grid.end(), val) - grid.begin()) - 1;
+        return {i, (val - grid[i]) / (grid[i + 1] - grid[i])};
     }
-    
+
+    Cell locate(Scalar rh_f, Scalar rh_r, Scalar roll, Scalar yaw) const {
+        Cell c;
+        const std::array<const std::vector<Scalar>*, 4> axes{&grid_.rh_f, &grid_.rh_r, &grid_.roll, &grid_.yaw};
+        const std::array<Scalar, 4> v{rh_f, rh_r, roll, yaw};
+        for (size_t a = 0; a < 4; ++a) {
+            if (v[a] < axes[a]->front() || v[a] > axes[a]->back()) c.ood |= std::uint8_t(1u << a);
+            std::tie(c.i[a], c.w[a]) = find_index_weight(*axes[a], v[a]);
+        }
+        if (c.ood) ++ood_count_;
+        return c;
+    }
+
     // 4D線形補間
-    Scalar interpolate_4d(const std::vector<Scalar>& data,
-                          size_t i0, size_t j0, size_t k0, size_t l0,
-                          Scalar w0, Scalar w1, Scalar w2, Scalar w3) const {
+    Scalar interp(const std::vector<Scalar>& data, const Cell& c) const {
         Scalar sum = Scalar(0);
         for (int di = 0; di <= 1; ++di) {
-            Scalar wi = (di == 0) ? (Scalar(1) - w0) : w0;
+            const Scalar wi = di ? c.w[0] : Scalar(1) - c.w[0];
             for (int dj = 0; dj <= 1; ++dj) {
-                Scalar wj = (dj == 0) ? (Scalar(1) - w1) : w1;
+                const Scalar wj = dj ? c.w[1] : Scalar(1) - c.w[1];
                 for (int dk = 0; dk <= 1; ++dk) {
-                    Scalar wk = (dk == 0) ? (Scalar(1) - w2) : w2;
+                    const Scalar wk = dk ? c.w[2] : Scalar(1) - c.w[2];
                     for (int dl = 0; dl <= 1; ++dl) {
-                        Scalar wl = (dl == 0) ? (Scalar(1) - w3) : w3;
-                        sum += wi * wj * wk * wl * 
-                               data[idx(i0 + di, j0 + dj, k0 + dk, l0 + dl)];
+                        const Scalar wl = dl ? c.w[3] : Scalar(1) - c.w[3];
+                        sum += wi * wj * wk * wl * data[idx(c.i[0] + di, c.i[1] + dj, c.i[2] + dk, c.i[3] + dl)];
                     }
                 }
             }

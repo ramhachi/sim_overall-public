@@ -84,6 +84,40 @@ int main() {
         std::cout << gear << "\t" << std::fixed << std::setprecision(1) << speed << std::endl;
     }
     
+    // === 判定（#34）: 部分負荷・エンジンブレーキ・リミッタ ===
+    int failures = 0;
+    auto check = [&](bool ok, const char* what) {
+        std::cout << (ok ? "  PASS " : "  FAIL ") << what << std::endl;
+        if (!ok) ++failures;
+    };
+    std::cout << "\n=== Checks ===" << std::endl;
+    const double t_wot = engine.get_torque(10000, 1.0);
+    const double t_closed = engine.get_torque(10000, 0.0);
+    const double t_half = engine.get_torque(10000, 0.5);
+    check(std::abs(t_wot - 61.0) < 1e-9, "13-point WOT curve @10000 rpm = 61 Nm");
+    check(t_closed < 0.0, "closed throttle gives engine braking (T < 0)");
+    check(std::abs(t_half - 0.5 * (t_wot + t_closed)) < 1e-9, "part throttle = thr*T_WOT + (1-thr)*T_closed");
+    check(std::abs(engine.get_torque(12500, 0.0) + 0.08 * 63.0) < 1e-9, "default closed curve = -0.08*T_peak at rpm_peak");
+    check(engine.get_torque(15000, 1.0) < 0.0, "rev limiter: no combustion torque above redline");
+    check(std::abs(engine.get_torque(15000, 1.0) - engine.get_torque(14500, 0.0)) < 1e-9,
+          "above redline only motoring torque remains");
+
+    EngineTorqueMap measured = create_cbr600rr_engine();
+    std::vector<double> closed(kCbr600rrRpm.size(), -6.0);
+    measured.set_closed_curve(closed);
+    check(std::abs(measured.get_torque(10000, 0.0) + 6.0) < 1e-9, "explicit torque_closed_curve is used");
+
+    std::vector<std::vector<double>> table;
+    for (double t : kCbr600rrTorque) table.push_back({-5.0, 0.6 * t, t});
+    measured.set_throttle_table({0.0, 0.25, 1.0}, table);
+    check(std::abs(measured.get_torque(10000, 0.25) - 0.6 * 61.0) < 1e-9, "2D table node value");
+    check(std::abs(measured.get_torque(10000, 0.125) - 0.5 * (-5.0 + 0.6 * 61.0)) < 1e-9, "2D table bilinear in throttle");
+    check(std::abs(measured.get_torque(11500, 1.0) - 0.5 * (62.0 + 62.5)) < 1e-9, "2D table bilinear in rpm");
+    if (failures > 0) {
+        std::cout << failures << " check(s) FAILED" << std::endl;
+        return 1;
+    }
+
     std::cout << "\n✓ All tests completed successfully!" << std::endl;
     
     return 0;
