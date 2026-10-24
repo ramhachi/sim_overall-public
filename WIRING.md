@@ -63,3 +63,44 @@ C++ changes:
 3. Old artifacts (no `roll_gain_definition` key) carry the double-counted total
    gain: when the key is absent, ignore `roll_camber_gain`/`roll_steer_gain`
    (set 0) and log once.
+
+## #40 dense samples, fit gate, loaded contact patch
+
+Per corner (`params.suspension.kc.corners.<FL|FR|RL|RR>`):
+
+```json
+"sample_values": {
+  "travel_m":            [..],   // knots, compression-positive, ascending, +/-(bump_stop_gap+10mm) at <=2 mm
+  "camber_rad":          [..],   // chassis-relative camber incl. static camber
+  "toe_rad":             [..],   // only when a tie rod / toe link was evaluated
+  "caster_rad": [..], "kpi_rad": [..],
+  "track_change_m":      [..],   // contact-patch lateral motion, outboard positive (per corner = half-track change)
+  "rc_height_m":         [..],   // axle RC height above ground at symmetric heave
+  "jacking_force_per_fy":[..],   // same sign convention as kinematics.jacking_force_per_fy (proxy)
+  "anti_brake": [..], "anti_drive": [..],          // per-axle force fractions (#37)
+  "roll_rad": [..],                                  // knots, 14DOF roll convention, ascending, 0.5 deg
+  "roll_camber_residual_rad": [..], "roll_toe_residual_rad": [..], "roll_center_height_m": [..],
+  "steer_rad": [..], "steer_rack_m": [..], "steer_camber_rad": [..], "steer_toe_rad": [..]  // ~1 deg knots
+},
+"polyfit_quality": { "...max_error...": .., "tolerances": {"camber_rad":2e-3,"toe_rad":1e-3,"rc_m":5e-3}, "fit_ok": true }
+```
+
+Axle block adds `roll_center_height_per_travel_sq` [1/m] and
+`roll_center_height_per_roll_sq` [m/rad^2]: RC fits are now quadratic (RC height
+vs roll is even for a symmetric axle, so the old linear term was ~0 and the fit
+error was tens of mm). Runtime upgrade in
+`compute_roll_center_height_for_wheel`:
+`h = h0 + c1*t + c2*t*t + r1*phi + r2*phi*phi` (`c2`,`r2` default 0 if absent).
+
+Preferred runtime path (replaces the quadratics when present, linear interp,
+no solver): `camber = Table1D{travel_m, camber_rad}.eval(susp_travel_from_eq)`,
+same for `toe_rad`. Keep the quadratic as fallback when `sample_values` is
+absent. Parse rule: arrays must be the same length as `travel_m`, else ignore
+the table and log.
+
+Export is refused in MATLAB when `fit_ok=false` unless
+`run_options.allow_poor_fit=true`; such corners carry
+`quality.verdict="provisional"` with reason `poor_polyfit` (see #39 for the
+C++ verdict rule). `hardpoints.contact_patch` now uses the loaded radius
+`R - Fz_static/k_tire` and the camber lateral shift; the wheel centre Z is at
+`-R_loaded` (ground at Z=0).

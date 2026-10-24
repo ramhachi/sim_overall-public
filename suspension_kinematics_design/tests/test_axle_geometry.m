@@ -4,8 +4,12 @@ classdef test_axle_geometry < matlab.unittest.TestCase
             params = create_vehicle_baseline_template();
             axle = resolve_axle_geometry(params, struct(), 'front');
 
-            tc.verifyEqual(axle.W_C, [params.mass.a; -params.mass.track_f / 2; -params.tire.radius], ...
+            % Wheel centre sits at the loaded radius: R - Fz_static/k_tire (#40).
+            fz = 0.5 * params.mass.m_total * 9.81 * params.mass.b / params.mass.wheelbase;
+            rLoaded = params.tire.radius - fz / params.tire.k_tire;
+            tc.verifyEqual(axle.W_C, [params.mass.a; -params.mass.track_f / 2; -rLoaded], ...
                 'AbsTol', 1e-12);
+            tc.verifyEqual(axle.R_loaded, rLoaded, 'AbsTol', 1e-12);
             tc.verifyEqual(axle.R_tire, params.tire.radius);
             tc.verifyEqual(axle.arm_x_offset, params.suspension.arm_chassis_x_offset);
         end
