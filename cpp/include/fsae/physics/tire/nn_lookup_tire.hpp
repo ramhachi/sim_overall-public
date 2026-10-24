@@ -50,6 +50,11 @@ struct NNRuntimeDiagnostics {
     uint64_t symmetry_projections = 0;
     uint64_t sa_zero_projections = 0;
     uint64_t friction_cap_projections = 0;
+    /// predict() calls with at least one input outside input_bounds
+    /// (rate = out_of_domain_calls / prediction_calls).
+    uint64_t out_of_domain_calls = 0;
+    /// OR of bits seen: bit i set when input i (SR, SA, Fz, IA, TSTC) left its bounds.
+    uint32_t out_of_domain_mask = 0;
 };
 
 struct FCLayer {
@@ -196,13 +201,40 @@ public:
         }
 
         std::array<double, 5> x = {input.SR, input.SA, input.Fz, input.IA, input.TSTC};
+        double sr_decay = 1.0;
+        double sa_decay = 1.0;
+        double fz_gate = 1.0;
         if (has_input_bounds_) {
+            uint32_t ood = 0;
             for (size_t i = 0; i < x.size(); ++i) {
+                if (x[i] < input_min_[i] || x[i] > input_max_[i]) {
+                    ood |= 1u << i;
+                }
                 x[i] = std::clamp(x[i], input_min_[i], input_max_[i]);
             }
+            if (ood != 0 && runtime_diagnostics_enabled_) {
+                ++runtime_diagnostics_.out_of_domain_calls;
+                runtime_diagnostics_.out_of_domain_mask |= ood;
+            }
+            sr_decay = post_peak_decay(input.SR, 0);
+            sa_decay = post_peak_decay(input.SA, 1);
+            // Below the trained Fz floor fade every output to zero so a lifted
+            // wheel (Fz=0) produces no force instead of the Fz_min force.
+            if (input_min_[2] > 0.0 && input.Fz < input_min_[2]) {
+                const double t = std::max(input.Fz, 0.0) / input_min_[2];
+                fz_gate = t * t * (3.0 - 2.0 * t);
+            }
+            // ponytail: Fz above input_max still holds the Fz_max output; extend the
+            // trained domain with TTC high-load runs before extrapolating here.
         }
         std::array<double, 4> y = forward_physical(x, include_mx);
         apply_runtime_postprocess(x, y, include_mx);
+        y[0] *= sr_decay;
+        y[1] *= sa_decay;
+        y[3] *= sa_decay;
+        for (double& v : y) {
+            v *= fz_gate;
+        }
 
         TireForces forces;
         forces.Fx = y[0];
@@ -297,6 +329,23 @@ private:
     mutable std::vector<double> runtime_head_buffer_;
 
     static double swish(double x) { return x / (1.0 + std::exp(-x)); }
+
+    /// Monotone post-peak decay for |slip| beyond the trained bound: the bound
+    /// value decays toward kSlidingRatio of itself with an e-folding length equal
+    /// to the half-width of the trained range (13 deg SA / 0.5 SR for TTC).
+    /// Basis: racing-slick force past peak falls to roughly 0.8-0.9 of peak in
+    /// full slide (TTC Hoosier sweeps); 0.8 is the conservative end.
+    double post_peak_decay(double value, size_t i) const {
+        constexpr double kSlidingRatio = 0.8;
+        const double excess = value > input_max_[i]   ? value - input_max_[i]
+                              : value < input_min_[i] ? input_min_[i] - value
+                                                      : 0.0;
+        const double scale = 0.5 * (input_max_[i] - input_min_[i]);
+        if (excess <= 0.0 || scale <= 0.0) {
+            return 1.0;
+        }
+        return kSlidingRatio + (1.0 - kSlidingRatio) * std::exp(-excess / scale);
+    }
 
     static std::vector<double> flatten_weights(const std::vector<std::vector<double>>& weights) {
         std::vector<double> flat;

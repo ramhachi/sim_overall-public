@@ -317,6 +317,56 @@ TEST(RealNNModel, RuntimePostprocessAppliesZeroSlipCorrectionAndFrictionCap) {
     fs::remove_all(runtime_dir);
 }
 
+TEST(RealNNModel, OutOfDomainFadesLiftedWheelAndDecaysPastSlipBound) {
+    namespace fs = std::filesystem;
+    const fs::path runtime_dir = "test_nn_runtime_out_of_domain";
+    fs::create_directories(runtime_dir);
+    {
+        std::ofstream file(runtime_dir / "pinn_runtime.json");
+        ASSERT_TRUE(file.is_open());
+        // Linear toy model: Fx=2000*SR, Fy=-100*SA+50, Mx=5, Mz=10*SA, offsets so
+        // Fz=Fz_min would still give non-zero output.
+        file << R"JSON({
+  "input": {"mean": [0, 0, 0, 0, 0], "std": [1, 1, 1, 1, 1]},
+  "output": {"mean": [0, 0, 0, 0], "std": [1, 1, 1, 1]},
+  "input_bounds": {"min": [-0.5, -13.0, 100.0, -5.0, 25.0],
+                   "max": [0.5, 13.0, 2000.0, 5.0, 90.0]},
+  "layers": [{"type": "linear",
+    "weight": [[2000, 0, 0, 0, 0], [0, -100, 0, 0, 0], [0, 0, 0, 0, 0], [0, 10, 0, 0, 0]],
+    "bias": [100, 50, 5, 1]}]
+})JSON";
+    }
+    NNTextTireModel model;
+    ASSERT_NO_THROW(model.load_from_export(runtime_dir.string()));
+    model.set_runtime_diagnostics_enabled(true);
+
+    const auto lifted = model.predict({0.1, 5.0, 0.0, 0.0, 60.0});
+    EXPECT_DOUBLE_EQ(lifted.Fx, 0.0);
+    EXPECT_DOUBLE_EQ(lifted.Fy, 0.0);
+    EXPECT_DOUBLE_EQ(lifted.Mx, 0.0);
+    EXPECT_DOUBLE_EQ(lifted.Mz, 0.0);
+    const auto half = model.predict({0.1, 5.0, 50.0, 0.0, 60.0});
+    const auto full = model.predict({0.1, 5.0, 100.0, 0.0, 60.0});
+    EXPECT_NEAR(half.Fy, 0.5 * full.Fy, 1e-9);  // smoothstep(0.5) = 0.5
+
+    const double fy13 = std::abs(model.predict({0.0, 13.0, 1000.0, 0.0, 60.0}).Fy);
+    const double fy16 = std::abs(model.predict({0.0, 16.0, 1000.0, 0.0, 60.0}).Fy);
+    const double fy20 = std::abs(model.predict({0.0, 20.0, 1000.0, 0.0, 60.0}).Fy);
+    const double fy90 = std::abs(model.predict({0.0, 90.0, 1000.0, 0.0, 60.0}).Fy);
+    EXPECT_LT(fy16, fy13);
+    EXPECT_LT(fy20, fy16);
+    EXPECT_GT(fy90, 0.79 * fy13);  // floor at sliding ratio, never sign flip
+
+    const double fx_bound = model.predict({0.5, 0.0, 1000.0, 0.0, 60.0}).Fx;
+    EXPECT_LT(model.predict({0.9, 0.0, 1000.0, 0.0, 60.0}).Fx, fx_bound);
+
+    const auto diag = model.runtime_diagnostics();
+    EXPECT_EQ(diag.prediction_calls, 9u);
+    EXPECT_EQ(diag.out_of_domain_calls, 6u);
+    EXPECT_EQ(diag.out_of_domain_mask, (1u << 0) | (1u << 1) | (1u << 2));
+    fs::remove_all(runtime_dir);
+}
+
 TEST(RealNNModel, MultiHeadRuntimeJsonInference) {
     namespace fs = std::filesystem;
 
