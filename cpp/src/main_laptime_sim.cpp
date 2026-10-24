@@ -195,6 +195,9 @@ struct SimulationConfig {
     std::string velocity_profile_input_file = "";
     std::string velocity_profile_output_file = "";
 
+    // 単一摩擦利用マージン（Issue #26, --friction-margin）
+    double friction_margin = laptime::kDefaultFrictionMargin;
+
     // CSV トラックの周回フラグ（--track-closed / --track-open）。未指定は CSV `# closed=` → 警告付きヒューリスティック
     std::optional<bool> track_closed;
 };
@@ -1058,7 +1061,7 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
     perf.rho = vehicle_params.aero.rho > 0.1 ? vehicle_params.aero.rho : 1.225;
     perf.mu_lat = vehicle_params.tire.mu_y_max;
     perf.mu_lon = vehicle_params.tire.mu_x_max;
-    perf.safety_factor = 0.95;
+    perf.friction_margin = config.friction_margin;  // 単一マージン（Issue #26）、旧 safety_factor 0.95 は廃止
     perf.use_load_sensitive_lateral_limit =
         config.eval_mode == "fast" || vehicle_params.tire.model_type == "tmeasy";
     perf.tire_nominal_load = vehicle_params.tire.Fz_nom;
@@ -1130,7 +1133,6 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
         perf.max_speed = 9.5;           // [m/s] ≈ 34 km/h
         perf.max_lat_accel = 1.0 * 9.81; // 加速度制限も整合させる
         perf.enforce_max_lat_accel = true;
-        perf.safety_factor = 0.80;
     }
 
     if (vehicle_params.steering.torque_mode) {
@@ -1352,12 +1354,9 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
                     config.driver_capability_profile_file);
                 driver::apply_attack_overrides(profile.attack_overrides, mpc_config);
             }
+            // 旧: 質量則 pow(282/m, 0.675) を lateral_safety に追加で掛けていた → 廃止（Issue #26, 係数 1.0）
             if (config.attack_speed_lateral_safety > 0.0) {
                 mpc_config.attack_speed_lateral_safety = config.attack_speed_lateral_safety;
-            }
-            if (config.attack_speed_lateral_safety <= 0.0) {
-                mpc_config.attack_speed_lateral_safety *=
-                    driver::attack_vehicle_lateral_safety_scale(vehicle_params);
             }
             if (config.attack_speed_braking_safety > 0.0) {
                 mpc_config.attack_speed_braking_safety = config.attack_speed_braking_safety;
@@ -3083,6 +3082,11 @@ int exit_code_for_result(const LapResult& result) {
     return 1;
 }
 
+static void warn_deprecated_margin(const std::string& arg) {
+    std::cerr << "Warning: " << arg << " is deprecated (Issue #26); use --friction-margin "
+              << "(single margin applied once to the lateral/braking limits)." << std::endl;
+}
+
 int main(int argc, char** argv) {
     SimulationConfig config;
     // Argument parsing
@@ -3113,8 +3117,9 @@ int main(int argc, char** argv) {
         else if (arg == "--lpv-model" && i + 1 < argc) config.lpv_model = argv[++i];
         else if (arg == "--lpv-lateral-weight-scale" && i + 1 < argc) config.lpv_lateral_weight_scale = std::stod(argv[++i]);
         else if (arg == "--lpv-heading-weight-scale" && i + 1 < argc) config.lpv_heading_weight_scale = std::stod(argv[++i]);
-        else if (arg == "--attack-speed-lateral-safety" && i + 1 < argc) config.attack_speed_lateral_safety = std::stod(argv[++i]);
-        else if (arg == "--attack-speed-braking-safety" && i + 1 < argc) config.attack_speed_braking_safety = std::stod(argv[++i]);
+        else if (arg == "--attack-speed-lateral-safety" && i + 1 < argc) { config.attack_speed_lateral_safety = std::stod(argv[++i]); warn_deprecated_margin(arg); }
+        else if (arg == "--attack-speed-braking-safety" && i + 1 < argc) { config.attack_speed_braking_safety = std::stod(argv[++i]); warn_deprecated_margin(arg); }
+        else if (arg == "--friction-margin" && i + 1 < argc) config.friction_margin = std::stod(argv[++i]);
         else if (arg == "--attack-speed-accel-limit" && i + 1 < argc) config.attack_speed_accel_limit = std::stod(argv[++i]);
         else if (arg == "--attack-rollout-understeer-gradient" && i + 1 < argc) config.attack_rollout_understeer_gradient = std::stod(argv[++i]);
         else if (arg == "--attack-floor-straight" && i + 1 < argc) config.attack_floor_straight = std::stod(argv[++i]);
@@ -3294,6 +3299,10 @@ int main(int argc, char** argv) {
     }
     if (config.laps < 1) {
         std::cerr << "--laps must be >= 1." << std::endl;
+        return 1;
+    }
+    if (!(config.friction_margin > 0.0 && config.friction_margin <= 1.0)) {
+        std::cerr << "--friction-margin must be in (0, 1]." << std::endl;
         return 1;
     }
     if (!config.velocity_profile_input_file.empty() &&

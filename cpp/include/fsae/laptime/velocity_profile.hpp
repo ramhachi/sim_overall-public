@@ -6,6 +6,7 @@
 /// トラック上の各位置での目標車速を計算
 
 #include "../track/track_model.hpp"
+#include "ggv_map.hpp"
 #include "../physics/aero/aero_map_4d.hpp"
 #include "../driver/steering_actuator_controller.hpp"
 #include <vector>
@@ -35,7 +36,10 @@ struct VehiclePerformance {
     double max_lon_decel = 1.8 * 9.81;
     double max_speed = 30.0;
     double min_speed = 5.0;
-    double safety_factor = 0.90;    // 摩擦円の90%を使用（PIDの追従余裕）
+    // 単一の摩擦利用マージン（Issue #26）: 横限界と制動限界に 1 回だけ掛ける
+    double friction_margin = kDefaultFrictionMargin;
+    // deprecated（Issue #26）: 旋回速度への追加倍率。既定 1.0、friction_margin を使うこと
+    double safety_factor = 1.0;
 
     // 物理パラメータ
     bool use_physics_model = true;
@@ -75,7 +79,7 @@ struct VehiclePerformance {
     double steering_min_preview_distance = 3.0;       // [m]
     double steering_max_preview_distance = 25.0;      // [m]
     double steering_deadband = 0.02;                 // [rad]
-    double steering_speed_safety_factor = 0.85;      // [-]
+    double steering_speed_safety_factor = 1.0;       // [-] deprecated（Issue #26）, 旧 0.85
     double steering_inertia = 0.02;                  // [kg*m^2]
     double steering_friction_torque = 0.3;           // [Nm]
     double steering_driver_torque_max = 25.0;        // [Nm]
@@ -162,7 +166,7 @@ private:
                 } else {
                     // 空力を考慮した旋回限界: v^2 * kappa <= mu * (g + 0.5/m * rho * cl_a * v^2)
                     double aero_const = 0.5 * perf_.rho * perf_.cl_a / perf_.mass;
-                    double denom = kappa_abs / perf_.mu_lat - aero_const;
+                    double denom = kappa_abs / (perf_.friction_margin * perf_.mu_lat) - aero_const;
 
                     double v_sq;
                     if (denom > 1e-6) {
@@ -303,7 +307,8 @@ private:
 
             // 摩擦円制約に基づく利用可能な減速度
             double lat_ratio = std::clamp(std::abs(ay) / ay_max, 0.0, 1.0);
-            double ax_avail = perf_.max_lon_decel * std::sqrt(1.0 - lat_ratio * lat_ratio);
+            double ax_avail = perf_.friction_margin * perf_.max_lon_decel
+                            * std::sqrt(1.0 - lat_ratio * lat_ratio);
 
             // 空力ドラッグによる補助（減速を助ける）
             double drag_accel = get_drag_accel(next.v);
@@ -335,7 +340,7 @@ private:
         }
     }
 
-    /// 速度に応じた最大横加速度を取得（空力考慮）
+    /// 速度に応じた使用可能横加速度（空力考慮、friction_margin を 1 回だけ適用）
     double get_max_lat_accel(double v) const {
         const double downforce = get_downforce(v);
         const double fz_total = perf_.mass * 9.81 + downforce;
@@ -346,7 +351,7 @@ private:
         if (perf_.enforce_max_lat_accel && perf_.max_lat_accel > 0.0) {
             ay_max = std::min(ay_max, perf_.max_lat_accel);
         }
-        return ay_max;
+        return perf_.friction_margin * ay_max;
     }
 
     double get_downforce(double v) const {

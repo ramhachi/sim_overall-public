@@ -78,6 +78,25 @@ TEST(LapPlanner, OpenTrackTerminalSpeedIsBackwardBoundary) {
     expect_realizable(stop_end, perf);
 }
 
+// Issue #26: one explicit margin, applied once to the lateral limit (v ∝ sqrt(m)); legacy
+// factors default to 1.0.
+TEST(LapPlanner, SingleFrictionMarginAppliedOnce) {
+    laptime::VehiclePerformance defaults;
+    EXPECT_DOUBLE_EQ(defaults.friction_margin, laptime::kDefaultFrictionMargin);
+    EXPECT_DOUBLE_EQ(defaults.safety_factor, 1.0);
+    EXPECT_DOUBLE_EQ(defaults.steering_speed_safety_factor, 1.0);
+
+    auto perf = base_perf();
+    perf.cl_a = 0.0;
+    auto track = track::create_circle_track(20.0);
+    perf.friction_margin = 1.0;
+    const double v_full = laptime::VelocityProfileGenerator(perf).generate(track)[50].v;
+    perf.friction_margin = 0.81;
+    const double v_m = laptime::VelocityProfileGenerator(perf).generate(track)[50].v;
+    EXPECT_NEAR(v_full, std::sqrt(perf.mu_lat * 9.81 * 20.0), 1e-6);
+    EXPECT_NEAR(v_m / v_full, 0.9, 1e-6);
+}
+
 // Issue #24: standing start — no min_speed floor on the straight, no warmup ramp.
 TEST(LapPlanner, AccelerationEventIsStandingStart) {
     auto perf = base_perf();

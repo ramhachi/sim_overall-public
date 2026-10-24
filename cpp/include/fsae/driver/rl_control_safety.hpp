@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../laptime/ggv_map.hpp"
 #include "../track/frenet.hpp"
 #include "../track/track_model.hpp"
 #include "../vehicle/vehicle_14dof_new.hpp"
@@ -80,7 +81,7 @@ inline void apply_rl_curvature_speed_limit(const vehicle::State14DOF& state,
                                            const vehicle::VehicleParams& params = vehicle::VehicleParams::default_fsae()) {
     const double mu = std::max({params.tire.mu_x_max, params.tire.mu_y_max, 0.1});
     constexpr double g = 9.81;
-    constexpr double safety = 0.82;
+    const double safety = laptime::kDefaultFrictionMargin;  // single margin (Issue #26), was 0.82
     constexpr double min_speed = 5.0;
 
     auto frenet = converter.global_to_frenet(
