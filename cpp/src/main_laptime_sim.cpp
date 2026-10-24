@@ -34,6 +34,7 @@
 #include <vector>
 #include <array>
 #include <limits>
+#include <optional>
 
 using namespace fsae;
 using json = nlohmann::json;
@@ -192,6 +193,9 @@ struct SimulationConfig {
     std::string rl_teacher_output_file = "";
     std::string velocity_profile_input_file = "";
     std::string velocity_profile_output_file = "";
+
+    // CSV トラックの周回フラグ（--track-closed / --track-open）。未指定は CSV `# closed=` → 警告付きヒューリスティック
+    std::optional<bool> track_closed;
 };
 
 bool is_autocross_like_track(const SimulationConfig& config) {
@@ -650,7 +654,7 @@ track::CurvatureBasedTrack create_track(const SimulationConfig& config, LapResul
         }
         std::cout << "Loading track from CSV: " << config.track_name << std::endl;
         try {
-            auto waypoints = track::WaypointTrackBuilder::load_from_csv(config.track_name, config.track_width);
+            auto waypoints = track::WaypointTrackBuilder::load_from_csv(config.track_name, config.track_width, config.track_closed);
             return track::WaypointTrackBuilder(waypoints, config.track_width).build();
         } catch (const std::exception& e) {
             throw DiagnosticFailure(
@@ -681,7 +685,7 @@ track::CurvatureBasedTrack create_track(const SimulationConfig& config, LapResul
             result->track_csv_path = csv_path;
         }
         try {
-            auto waypoints = track::WaypointTrackBuilder::load_from_csv(csv_path, config.track_width);
+            auto waypoints = track::WaypointTrackBuilder::load_from_csv(csv_path, config.track_width, config.track_closed);
             return track::WaypointTrackBuilder(waypoints, config.track_width).build();
         } catch (const std::exception& e) {
             throw DiagnosticFailure(
@@ -3074,6 +3078,8 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--track" && i + 1 < argc) config.track_name = argv[++i];
+        else if (arg == "--track-closed") config.track_closed = true;
+        else if (arg == "--track-open") config.track_closed = false;
         else if (arg == "--gain-preset" && i + 1 < argc) config.gain_preset = argv[++i];
         else if (arg == "--radius" && i + 1 < argc) config.track_radius = std::stod(argv[++i]);
         else if ((arg == "--track-width" || arg == "--width") && i + 1 < argc) config.track_width = std::stod(argv[++i]);

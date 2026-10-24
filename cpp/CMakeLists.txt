@@ -260,3 +260,11 @@ target_link_libraries(prof_fsae PRIVATE fsae_core)
 
 add_executable(prof_nn_tire src/prof_nn_tire.cpp)
 target_link_libraries(prof_nn_tire PRIVATE fsae_core)
+
+# ---- LAP package (Issues #23-#30) ----
+if(BUILD_TESTS)
+    # Issue #25: spline κ on analytic circles (< 0.5 %) and autocross peak κ report
+    add_test(NAME track_model_geometry
+             COMMAND test_track_model ${CMAKE_SOURCE_DIR}
+             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endif()

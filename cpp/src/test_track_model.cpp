@@ -7,6 +7,9 @@
 #include <iostream>
 #include <fstream>
 #include <iomanip>
+#include <cmath>
+#include <string>
+#include <vector>
 
 using namespace fsae::track;
 
@@ -173,7 +176,86 @@ void test_waypoint_loader() {
     }
 }
 
-int main() {
+static int g_failures = 0;
+#define TRACK_CHECK(cond, msg) do { if (!(cond)) { std::cerr << "FAIL: " << msg << std::endl; ++g_failures; } } while (0)
+
+/// Issue #25: spline κ on an analytic circle (waypoints every ~1.5 m) must be within 0.5 %.
+void test_spline_curvature_circle() {
+    for (double R : {7.5, 15.0, 40.0}) {
+        std::vector<Waypoint> wps;
+        const int n = static_cast<int>(std::ceil(2.0 * M_PI * R / 1.5));
+        for (int i = 0; i <= n; ++i) {
+            const double a = 2.0 * M_PI * i / n;
+            wps.push_back({R * std::cos(a), R * std::sin(a), 3.0});
+        }
+        auto track = WaypointTrackBuilder(wps, 3.0).build();
+        double max_err = 0.0;
+        for (const auto& p : track.points()) {
+            max_err = std::max(max_err, std::abs(p.kappa * R - 1.0));
+        }
+        std::cout << "circle R=" << R << " max rel kappa err=" << max_err * 100.0 << " %" << std::endl;
+        TRACK_CHECK(max_err < 0.005, "circle kappa error >= 0.5 % at R=" << R);
+        TRACK_CHECK(track.is_closed_loop(), "circle should be closed");
+
+        // Frenet: a point on the centreline between samples projects with sub-mm s error
+        FrenetConverter conv(track);
+        const double s_true = 0.37 * track.length();
+        const double a = s_true / R;
+        auto f = conv.global_to_frenet(R * std::cos(a), R * std::sin(a), a + M_PI / 2.0);
+        TRACK_CHECK(std::abs(f.s - s_true) < 0.01, "Frenet s error " << std::abs(f.s - s_true));
+        TRACK_CHECK(std::abs(f.n) < 0.01, "Frenet n error " << f.n);
+    }
+}
+
+/// Legacy (pre-#25) estimator for reporting: 3-point heading difference + 5-point box filter.
+static double legacy_peak_kappa(const std::vector<Waypoint>& w) {
+    const std::size_t n = w.size();
+    std::vector<double> k(n, 0.0);
+    for (std::size_t i = 1; i + 1 < n; ++i) {
+        const double tp = std::atan2(w[i].y - w[i - 1].y, w[i].x - w[i - 1].x);
+        const double tn = std::atan2(w[i + 1].y - w[i].y, w[i + 1].x - w[i].x);
+        const double d = std::remainder(tn - tp, 2.0 * M_PI);
+        k[i] = d / (0.5 * (std::hypot(w[i].y - w[i - 1].y, w[i].x - w[i - 1].x) +
+                           std::hypot(w[i + 1].y - w[i].y, w[i + 1].x - w[i].x)));
+    }
+    double peak = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        double sum = 0.0;
+        for (int j = -2; j <= 2; ++j) sum += k[(i + n + j) % n];
+        peak = std::max(peak, std::abs(sum / 5.0));
+    }
+    return peak;
+}
+
+/// Issue #25/#28: autocross CSV peak κ before/after, explicit columns + closed flag.
+void test_autocross_csv(const std::string& root) {
+    const std::string path = root + "/data/ASE_autocross_sim.csv";
+    std::ifstream probe(path);
+    if (!probe) {
+        std::cout << "skip autocross CSV test (run from repo root)" << std::endl;
+        return;
+    }
+    auto wps = WaypointTrackBuilder::load_from_csv(path, 3.0, true);
+    auto track = WaypointTrackBuilder(wps, 3.0).build();
+    double peak = 0.0, zmin = 1e9, zmax = -1e9;
+    for (const auto& p : track.points()) {
+        peak = std::max(peak, std::abs(p.kappa));
+        zmin = std::min(zmin, p.z);
+        zmax = std::max(zmax, p.z);
+    }
+    const double legacy = legacy_peak_kappa(wps);
+    std::cout << "autocross peak |kappa|: legacy(3pt+box5)=" << legacy
+              << " 1/m, spline=" << peak << " 1/m (" << (peak / legacy - 1.0) * 100.0
+              << " %), z range " << zmin << ".." << zmax << " m" << std::endl;
+    TRACK_CHECK(peak >= legacy, "spline should not attenuate peak kappa");
+    TRACK_CHECK(track.is_closed_loop(), "explicit closed flag ignored");
+    TRACK_CHECK(zmax - zmin > 0.1, "z column not mapped");
+    // Explicit open flag must win over the endpoint heuristic.
+    auto open_wps = WaypointTrackBuilder::load_from_csv(path, 3.0, false);
+    TRACK_CHECK(!WaypointTrackBuilder(open_wps, 3.0).build().is_closed_loop(), "explicit open ignored");
+}
+
+int main(int argc, char** argv) {
     std::cout << "Track Model Tests\n" << std::endl;
 
     test_circle_track();
@@ -182,7 +264,13 @@ int main() {
     test_frenet_conversion();
     test_racing_line();
     test_waypoint_loader();
+    test_spline_curvature_circle();
+    test_autocross_csv(argc > 1 ? argv[1] : ".");
 
+    if (g_failures > 0) {
+        std::cerr << g_failures << " track model check(s) failed" << std::endl;
+        return 1;
+    }
     std::cout << "\nAll track model tests completed!" << std::endl;
     return 0;
 }
