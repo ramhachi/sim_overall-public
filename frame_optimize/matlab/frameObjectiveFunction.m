@@ -219,6 +219,18 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
     end
     
     % Use front suspension mounts as load points
+    node_config.front_susp_nodes = susp_nodes_idx;
+    node_config.rear_susp_nodes = rear_susp_idx;
+    if is_v2
+        node_config.main_hoop_top_nodes = v2_meta.main_hoop_top_idx;
+    else
+        on_mh = find(abs(nodes(:, 1) - mh_x) < 1e-6);
+        [~, top] = max(nodes(on_mh, 3));
+        node_config.main_hoop_top_nodes = on_mh(top);
+    end
+    if ~isempty(getConfigField(config, 'load_cases_file', ''))
+        node_config.file_cases = import_frame_load_cases(config.load_cases_file, suspension_file);
+    end
     node_config.front_susp_left_nodes = susp_nodes_idx([1, 3, 5, 7]);
     node_config.front_susp_right_nodes = susp_nodes_idx([2, 4, 6, 8]);
     if is_v2 && isfield(v2_meta, 'diff_mount_idx') && ~isempty(v2_meta.diff_mount_idx)
@@ -449,7 +461,7 @@ function [primary_result, case_results, displacement_penalty, success] = solveOb
     end
 
     case_results = struct('name', {}, 'success', {}, 'K_torsion', {}, 'mass', {}, ...
-        'max_translation_m', {}, 'loads', {}, 'bcs', {}, 'error', {});
+        'max_translation_m', {}, 'loads', {}, 'bcs', {}, 'error', {}, 'source', {});
     displacement_penalty = 0;
     max_allowed = getConfigField(config, 'case_max_displacement_m', 0.025);
     primary_result = struct('mass', NaN, 'K_torsion', NaN, 'success', false);
@@ -480,6 +492,10 @@ function [primary_result, case_results, displacement_penalty, success] = solveOb
         case_results(ci).loads = load_cases(ci).loads;
         case_results(ci).bcs = load_cases(ci).bcs;
         case_results(ci).error = '';
+        case_results(ci).source = '';
+        if isfield(load_cases, 'source') && ~isempty(load_cases(ci).source)
+            case_results(ci).source = load_cases(ci).source;
+        end
 
         if ci == 1
             primary_result = result;

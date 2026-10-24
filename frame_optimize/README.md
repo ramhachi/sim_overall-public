@@ -303,6 +303,13 @@ Closed-form checks: `beam_fem_standalone --selftest` (CTest `beam_fem_closed_for
   (docs.md suggests 0.55–0.70) until stage 2 exists.
   *Stage 2 (follow-up, not implemented)*: per-joint-topology 6×6 condensed stiffness from offline shell
   sub-models, inserted as joint springs at beam nodes (≈3× DOF).
+* **Load cases (#49)**: rollover = rule main-hoop case (6 / 5 / −9 kN, verify against the current rules)
+  at the main-hoop top node (`meta.main_hoop_top_idx`). `config.load_cases_file` (schema
+  `frame_load_cases/v1`, see `import_frame_load_cases.m`) replaces the fixed-g lateral / braking /
+  diff proxies with per-mount forces/moments, e.g. a 14DOF envelope; A-arm ball-joint forces are split
+  along the two legs onto the chassis pickups; the case keeps the file's `source` tag. Supports: 3-2-1 on
+  the rear mounts (reactions carry the inertial resultant). `data/frame_load_cases_synthetic_example.json`
+  is **synthetic** (schema demo only); no 14DOF mount-load export exists yet.
 
 ---
 

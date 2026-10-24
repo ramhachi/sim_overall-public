@@ -92,6 +92,9 @@ node_config.rear_upper_nodes = [rear_susp_idx(3), rear_susp_idx(4)];
 node_config.front_susp_left_nodes = meta.susp_idx([1, 3, 5, 7]);
 node_config.front_susp_right_nodes = meta.susp_idx([2, 4, 6, 8]);
 node_config.diff_mount_nodes = meta.diff_mount_idx;
+node_config.main_hoop_top_nodes = meta.main_hoop_top_idx;
+node_config.front_susp_nodes = meta.susp_idx;
+node_config.rear_susp_nodes = rear_susp_idx;
 cases = generate_load_cases(nodes, geom.dimensions.total_mass_kg, 9.81, node_config);
 case_names = {cases.name};
 assert(any(strcmp(case_names, 'torsion')));
@@ -106,11 +109,30 @@ assert(abs(abs(lat_total) - geom.dimensions.total_mass_kg * 1.5 * 9.81) < 1e-6, 
     'Lateral load must be the full vehicle inertial force.');
 
 roll_case = cases(strcmp(case_names, 'rollover'));
-roll_lat = sum(roll_case.loads(roll_case.loads(:, 2) == 2, 3));
-roll_vert = sum(roll_case.loads(roll_case.loads(:, 2) == 3, 3));
-roll_expected = geom.dimensions.total_mass_kg * 1.5 * 9.81;
-assert(abs(abs(roll_lat) - roll_expected) < 1e-6, 'Rollover lateral load mismatch.');
-assert(abs(abs(roll_vert) - roll_expected) < 1e-6, 'Rollover vertical load mismatch.');
+% Rollover acts on the main-hoop top (#49), not on the rear A-arm mounts.
+mh_top = meta.main_hoop_top_idx;
+assert(all(roll_case.loads(:, 1) == mh_top), 'Rollover load must act on the main-hoop top node.');
+assert(abs(nodes(mh_top, 3) - max(nodes(meta.main_hoop_idx, 3))) < 1e-12, 'MH top must be the highest MH node.');
+roll_sum = arrayfun(@(d) sum(roll_case.loads(roll_case.loads(:, 2) == d, 3)), 1:3);
+assert(max(abs(roll_sum - [6000, 5000, -9000])) < 1e-9, 'Rollover must use the rule main-hoop load.');
+
+% Load-case file replaces the fixed-g proxies and keeps its source tag (#49).
+file_config = node_config;
+file_config.file_cases = import_frame_load_cases( ...
+    fullfile(data_dir, 'frame_load_cases_synthetic_example.json'), fixture_file);
+file_cases = generate_load_cases(nodes, geom.dimensions.total_mass_kg, 9.81, file_config);
+assert(isequal({file_cases.name}, {'torsion', 'rollover', 'synthetic_left_turn', 'synthetic_braking'}));
+assert(strcmp(file_cases(3).source, 'synthetic_example_not_from_14dof'));
+% A-arm split keeps the in-plane resultant: the braking force lies in the arm plane
+% (both legs differ only in X), so the sum is exact; SAE -X maps to frame +X.
+brk = file_cases(4).loads;
+assert(abs(sum(brk(brk(:, 2) == 1, 3)) - 3000) < 1e-6, 'A-arm split must preserve an in-plane arm force.');
+% Lateral arm forces leave the A-arm plane only by the reported residual.
+fr_nodes = meta.susp_idx([2, 4, 6, 8]);
+turn = file_cases(3).loads;
+fr_lat = sum(turn(ismember(turn(:, 1), fr_nodes) & turn(:, 2) == 2, 3));
+assert(abs(fr_lat - (-1800 + 600)) <= 2 * file_config.file_cases.cases(1).arm_residual_N + 1e-6, ...
+    'A-arm split error must be bounded by the out-of-plane residual.');
 
 missing_diff_failed = false;
 try

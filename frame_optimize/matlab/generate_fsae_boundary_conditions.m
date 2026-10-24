@@ -20,6 +20,8 @@ function [bcs, loads] = generate_fsae_boundary_conditions(nodes, load_case_name,
 %                   .total_mass_kg     - Vehicle mass for inertial loads (default: 230)
 %                   .lateral_g         - Lateral acceleration [G] (default: 1.5)
 %                   .braking_g         - Braking deceleration [G] (default: 1.0)
+%                   .main_hoop_top_nodes - main-hoop top node(s) (rollover)
+%                   .rollover_force_N  - [Fx Fy Fz] at the MH top (default rule 6/5/-9 kN)
 %
 % Outputs:
 %   bcs   - Bx3 [node_id, dof, value]
@@ -201,24 +203,20 @@ function [bcs, loads] = generate_fsae_boundary_conditions(nodes, load_case_name,
                 bcs = [bcs; n, 1, 0; n, 2, 0; n, 3, 0];
             end
             
-            % Conservative rollover proxy: 1.5 g lateral plus 1.5 g
-            % downward vertical at the main-hoop/upper-rear nodes.
-            F_roll_total = total_mass * 1.5 * g;
-            if isfield(config, 'rear_upper_nodes')
-                rear_upper_L = config.rear_upper_nodes(1);
-                rear_upper_R = config.rear_upper_nodes(2);
-                F_roll = F_roll_total / 2;
-                loads = [
-                    rear_upper_L, 2, F_roll;   % Lateral
-                    rear_upper_R, 2, F_roll;   % Lateral
-                    rear_upper_L, 3, -F_roll;  % Vertical (down)
-                    rear_upper_R, 3, -F_roll;  % Vertical (down)
-                ];
-            else
-                loads = [
-                    rear_L, 2, F_roll_total;
-                    rear_L, 3, -F_roll_total
-                ];
+            % Rule main-hoop load case at the main-hoop top (#49): FSAE alternative-frame
+            % "Main Hoop" case Fx = 6.0 kN, Fy = 5.0 kN, Fz = -9.0 kN.
+            % TODO(rules): verify magnitudes/directions against the current rulebook.
+            % Frame CS: +X rearward, +Y right, +Z up -> rearward, lateral, downward.
+            if ~isfield(config, 'main_hoop_top_nodes') || isempty(config.main_hoop_top_nodes)
+                error('generate_fsae_boundary_conditions:MissingMainHoopTop', ...
+                    'rollover requires config.main_hoop_top_nodes.');
+            end
+            roll_F = [6000, 5000, -9000];
+            if isfield(config, 'rollover_force_N'), roll_F = config.rollover_force_N; end
+            top = reshape(config.main_hoop_top_nodes, [], 1);
+            loads = [];
+            for d = 1:3
+                loads = [loads; top, repmat([d, roll_F(d) / numel(top)], numel(top), 1)]; %#ok<AGROW>
             end
 
         case 'diff_reaction'
