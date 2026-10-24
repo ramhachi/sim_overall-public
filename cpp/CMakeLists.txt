@@ -268,3 +268,10 @@ if(BUILD_TESTS)
              COMMAND test_track_model ${CMAKE_SOURCE_DIR}
              WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endif()
+
+if(BUILD_TESTS)
+    # Lap planner physics checks (Issues #23, #24, #26-#29)
+    add_executable(test_laptime_planner tests/test_velocity_profile_ggv.cpp)
+    target_link_libraries(test_laptime_planner PRIVATE fsae_core GTest::gtest GTest::gtest_main)
+    gtest_discover_tests(test_laptime_planner)
+endif()

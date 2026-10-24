@@ -204,7 +204,8 @@ private:
         double n_revolutions = total_angle_change / (2.0 * M_PI);
         double fractional_part = std::abs(n_revolutions - std::round(n_revolutions));
         constexpr double angle_tolerance = 10.0 * M_PI / 180.0;  // 10度
-        return (fractional_part * 2.0 * M_PI) < angle_tolerance;
+        // 0 回転（直線・S 字）は閉ループではない
+        return std::abs(std::round(n_revolutions)) >= 1.0 && (fractional_part * 2.0 * M_PI) < angle_tolerance;
     }
 
     /// トラックポイントを生成（積分により座標を計算）
@@ -511,13 +512,15 @@ inline CurvatureBasedTrack create_acceleration_track(
     curvature_data.emplace_back(length, 0.0);
     
     // 東向きスタート (θ = 0)
-    return CurvatureBasedTrack(
+    CurvatureBasedTrack track(
         curvature_data,
         0.0,        // x0
         0.0,        // y0
         0.0,        // theta0 (東向き)
         track_width
     );
+    track.set_closed(false);  // 直線は非周回（旧ヒューリスティックは ∫κ=0 を閉ループと誤判定していた）
+    return track;
 }
 
 } // namespace fsae::track

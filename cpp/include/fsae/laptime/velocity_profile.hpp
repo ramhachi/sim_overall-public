@@ -98,58 +98,40 @@ public:
     explicit VelocityProfileGenerator(const VehiclePerformance& perf)
         : perf_(perf) {}
 
-    std::vector<VelocityPoint> generate(const track::CurvatureBasedTrack& track, double ds = 1.0, std::optional<double> v_start = std::nullopt) {
+    /// @param v_start 非周回コースの始点速度（前進 pass の境界条件）。周回コースでは無視（周期解）
+    /// @param v_end   非周回コースの終端速度上限（後退 pass の境界条件）。未指定は自由（減速しない）
+    std::vector<VelocityPoint> generate(const track::CurvatureBasedTrack& track, double ds = 1.0,
+                                        std::optional<double> v_start = std::nullopt,
+                                        std::optional<double> v_end = std::nullopt) {
         // 1. 旋回限界速度の計算（純粋な横方向限界）
         auto profile = compute_corner_limited_speed(track, ds);
-
-        // 初期速度のオーバーライド
-        if (v_start.has_value() && !profile.empty()) {
-            profile[0].v = std::min(*v_start, perf_.max_speed);
-        }
+        if (profile.empty()) return profile;
 
         // 2. 操舵アクチュエータの状態付き到達性を反映
         apply_steering_state_speed_caps(profile);
 
-        // 3. 前方積分（加速限界 + 摩擦円制約）
-        profile = forward_integration(profile);
-
-        // 4. 後方積分（減速限界 + 摩擦円制約）
-        profile = backward_integration(profile);
-
-        // 5. 終端処理とループ連続性の確保
+        // 3/4. 前方積分（加速限界）→ 後方積分（減速限界）。境界条件は pass の中で与える（Issue #29）
         if (track.is_closed_loop() && profile.size() > 2) {
-            // 周回コースの場合は始点と終点の速度を一致させる
-            double v_boundary = std::min(profile.front().v, profile.back().v);
-            profile.front().v = v_boundary;
-            profile.back().v = v_boundary;
-            
-            // 境界付近を滑らかにつなぐ（前後5m）
-            for (auto& p : profile) {
-                double dist_from_start = p.s;
-                double dist_to_end = profile.back().s - p.s;
-                if (dist_from_start < 5.0) {
-                    double alpha = dist_from_start / 5.0;
-                    p.v = v_boundary * (1.0 - alpha) + p.v * alpha;
-                } else if (dist_to_end < 5.0) {
-                    double alpha = dist_to_end / 5.0;
-                    p.v = v_boundary * (1.0 - alpha) + p.v * alpha;
-                }
+            // 周回: 2 周分を前進→後退し、各点で 1 周目と 2 周目の像の min を取る。
+            // 1 周目は始点側の前進境界が、2 周目は終点側の後退境界が楽観的なので、min で周期解になる。
+            const std::size_t n = profile.size();
+            const double lap = profile.back().s;
+            std::vector<VelocityPoint> two = profile;
+            for (std::size_t i = 1; i < n; ++i) {
+                two.push_back(profile[i]);
+                two.back().s += lap;
             }
-        } else if (!profile.empty()) {
-            // 非周回コースの場合は安全のため終端で減速
-            double end_v = v_start.value_or(perf_.min_speed);
-            double end_s = profile.back().s;
-            for (auto& p : profile) {
-                double dist_to_end = end_s - p.s;
-                if (dist_to_end < 10.0) {
-                    double alpha = dist_to_end / 10.0;
-                    double v_limit = end_v * (1.0 - alpha) + p.v * alpha;
-                    p.v = std::min(p.v, v_limit);
-                }
+            two = backward_integration(forward_integration(std::move(two)));
+            for (std::size_t i = 0; i < n; ++i) {
+                profile[i].v = std::min(two[i].v, two[i + n - 1].v);
             }
+        } else {
+            if (v_start) profile.front().v = std::min(*v_start, profile.front().v);
+            if (v_end) profile.back().v = std::min(*v_end, profile.back().v);
+            profile = backward_integration(forward_integration(std::move(profile)));
         }
 
-        // 6. 加速度の最終更新
+        // 5. 加速度の最終更新
         update_accelerations(profile);
 
         return profile;
