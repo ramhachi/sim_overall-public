@@ -131,6 +131,8 @@ public:
     const DRSSystem& drs_system() const { return drs_system_; }
     bool is_drs_active() const { return drs_active_; }
     const std::array<double, 4>& tire_Mz() const { return tire_Mz_; }
+    /// 前輪キングピン軸トルク [FL, FR] [Nm]（角度モードでも診断用に更新, #5）
+    const std::array<double, 2>& get_kingpin_torque() const { return kingpin_torque_; }
     
     // ======== 初期化 ========
     void set_initial_velocity(double vx) {
@@ -586,6 +588,7 @@ private:
     mutable std::array<double, 4> tire_Fx_ = {0, 0, 0, 0};
     mutable std::array<double, 4> tire_Fy_ = {0, 0, 0, 0};
     mutable std::array<double, 4> tire_Mz_ = {0, 0, 0, 0};  // セルフアライニングトルク
+    mutable std::array<double, 2> kingpin_torque_ = {0, 0};  // 前輪キングピン軸トルク [Nm]
     mutable std::array<double, 4> bw_forces_ = {0, 0, 0, 0};
     mutable std::array<double, 4> lugre_forces_ = {0, 0, 0, 0};
     mutable std::array<double, 4> spring_forces_ = {0, 0, 0, 0};
@@ -1743,14 +1746,25 @@ private:
             dxdt(41) = ddphi_twist;
         }
 
+        // ======== キングピン軸トルク（#5）========
+        std::array<double, 2> T_kingpin{};
+        for (int i = 0; i < 2; ++i) {
+            const auto& kc = params_.suspension.kc_corners[i];
+            T_kingpin[i] = compute_kingpin_torque(
+                tire_Mz_stage[i], tire_Fx_stage[i], tire_Fy_stage[i],
+                kc.mechanical_trail, kc.caster, kc.scrub_radius,
+                std::copysign(1.0, wheel_pos[i].y()));
+        }
+        if (update_cache) kingpin_torque_ = T_kingpin;
+
         // ======== ステアリングホイールダイナミクス（Phase A2）========
         if (params_.steering.torque_mode) {
             // トルクモード: ステアリング運動方程式を解く
 
-            // セルフアライニングトルク合計（操舵軸へ戻る前輪のみ、ホイール座標系）
-            // Signed tire Mz sum: positive for a left turn and negative for a
-            // right turn. compute_steering_acceleration adds it as restoring torque.
-            double T_SAT_total = (tire_Mz_stage[FL] + tire_Mz_stage[FR]);
+            // 前輪キングピン軸トルク合計（Mz + 機械トレール + スクラブ）
+            // Signed: positive for a left turn and negative for a right turn.
+            // compute_steering_acceleration adds it as restoring torque.
+            double T_SAT_total = T_kingpin[0] + T_kingpin[1];
 
             // ドライバー入力トルク（input.steeringをトルクとして解釈）
             double T_driver = input.steering;
