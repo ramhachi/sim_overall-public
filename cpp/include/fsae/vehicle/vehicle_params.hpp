@@ -2,13 +2,27 @@
 /// @file vehicle_params.hpp
 /// @brief 14DOF車両パラメータ構造体
 
+#include <algorithm>
 #include <array>
 #include <string>
+#include <vector>
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <stdexcept>
 
 namespace fsae::vehicle {
+
+/// Piecewise-linear lookup with constant extrapolation. Empty table -> fallback.
+inline double interp1_clamped(const std::vector<double>& x, const std::vector<double>& y,
+                              double q, double fallback) {
+    if (x.empty() || x.size() != y.size()) return fallback;
+    if (q <= x.front()) return y.front();
+    if (q >= x.back()) return y.back();
+    const auto it = std::upper_bound(x.begin(), x.end(), q);
+    const size_t k = static_cast<size_t>(it - x.begin());
+    const double t = (q - x[k - 1]) / (x[k] - x[k - 1]);
+    return y[k - 1] + t * (y[k] - y[k - 1]);
+}
 
 /// 車輪インデックス
 enum WheelIndex : int {
@@ -282,8 +296,16 @@ struct PowertrainParams {
 
 /// ブレーキパラメータ
 struct BrakeParams {
-    double max_pressure = 8e6;  // 最大油圧 [Pa]
-    double balance = 0.55;      // フロント配分
+    double max_pressure = 8e6;  // 最大油圧 [Pa]（バランス中立時のライン圧 @ pedal=1）
+    // フロント配分 = 前後マスターシリンダ圧比 (#36): p_front = 2*balance*p,
+    // p_rear = 2*(1-balance)*p。0.5 で前後同圧（中立）、幾何学的な前後差は
+    // caliper_area*effective_radius が受け持つ（バランスバー + 同径MCの物理）。
+    double balance = 0.55;
+    // ペダル→ライン圧テーブル [0-1] -> [Pa]（空なら pedal*max_pressure）
+    std::vector<double> pedal_table = {};
+    std::vector<double> pressure_table = {};
+    double pressure_lag_s = 0.0;       // 1次遅れ時定数 τ [s]（0=遅れ無し）
+    double omega_smooth = 0.5;         // T = -T_max*tanh(ω/ω_s) の ω_s [rad/s]
     double mu_pad = 0.45;       // パッド摩擦係数
     std::array<double, 4> caliper_area = {0.002, 0.002, 0.0015, 0.0015};  // [m²]
     std::array<double, 4> effective_radius = {0.10, 0.10, 0.09, 0.09};    // [m]
@@ -697,6 +719,10 @@ struct VehicleParams {
             auto& b = config["brake"];
             if (b.contains("max_pressure")) p.brake.max_pressure = b["max_pressure"];
             if (b.contains("balance")) p.brake.balance = b["balance"];
+            if (b.contains("pedal_table")) p.brake.pedal_table = b["pedal_table"].get<std::vector<double>>();
+            if (b.contains("pressure_table")) p.brake.pressure_table = b["pressure_table"].get<std::vector<double>>();
+            if (b.contains("pressure_lag_s")) p.brake.pressure_lag_s = b["pressure_lag_s"];
+            if (b.contains("omega_smooth")) p.brake.omega_smooth = b["omega_smooth"];
             if (b.contains("mu_pad")) p.brake.mu_pad = b["mu_pad"];
             if (b.contains("caliper_area") && b["caliper_area"].is_array()) {
                 for (int i = 0; i < 4; ++i) p.brake.caliper_area[i] = b["caliper_area"][i];

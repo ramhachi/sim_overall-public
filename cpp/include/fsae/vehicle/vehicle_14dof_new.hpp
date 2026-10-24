@@ -149,6 +149,7 @@ public:
             state_.z_u[i] = z_u_equilibrium_[i];
         }
         time_ = 0;
+        brake_pressure_lagged_ = 0.0;
         invalidate_pinn_force_cache();
         
         // 初期状態でキャッシュを更新
@@ -169,6 +170,12 @@ public:
             state_.r,
             drs_steering_angle,
             dt);
+
+        if (params_.brake.pressure_lag_s > 0.0) {
+            // ponytail: lag held over the RK4 step (ZOH); make it a state if tau ~ dt.
+            brake_pressure_lagged_ += (1.0 - std::exp(-dt / params_.brake.pressure_lag_s))
+                * (compute_brake_pressure_cmd(input.brake) - brake_pressure_lagged_);
+        }
 
         StateVector x = state_to_vector(state_);
         if (pinn_cache_state_snapshot_valid_ &&
@@ -478,6 +485,23 @@ public:
         return compliance_angles;
     }
 
+    /// ペダル入力 [0-1] → ライン圧 [Pa]（テーブル未設定なら線形）
+    double compute_brake_pressure_cmd(double pedal) const {
+        return interp1_clamped(params_.brake.pedal_table, params_.brake.pressure_table, pedal,
+                               pedal * params_.brake.max_pressure);
+    }
+
+    /// ライン圧 → 各輪最大ブレーキトルク [Nm]（balance = 前後MC圧比, #36）
+    std::array<double, 4> compute_brake_torque_max(double line_pressure) const {
+        const auto& b = params_.brake;
+        std::array<double, 4> T{};
+        for (int i = 0; i < 4; ++i) {
+            const double p_axle = 2.0 * line_pressure * ((i < 2) ? b.balance : 1.0 - b.balance);
+            T[i] = p_axle * b.caliper_area[i] * b.mu_pad * b.effective_radius[i];
+        }
+        return T;
+    }
+
     /// ARB力計算
     /// @param susp_travel サスペンション変位 [m]
     /// @return ARB力 [N]
@@ -546,6 +570,7 @@ private:
     // DRSシステム
     DRSSystem drs_system_;
     mutable bool drs_active_ = false;
+    double brake_pressure_lagged_ = 0.0;  // ライン圧1次遅れ（step毎ZOH更新）[Pa]
 
     // デバッグ用キャッシュ
     mutable std::array<double, 4> tire_Fz_ = {0, 0, 0, 0};
@@ -1651,8 +1676,9 @@ private:
             torque_RR
         );
         
-        // ブレーキ圧力（input.brakeから）
-        double brake_pressure = input.brake * params_.brake.max_pressure;
+        // ブレーキ最大トルク（ライン圧の1次遅れは step() で ZOH 更新）
+        const auto T_brake_max = compute_brake_torque_max(
+            params_.brake.pressure_lag_s > 0.0 ? brake_pressure_lagged_ : compute_brake_pressure_cmd(input.brake));
 
         for (int i = 0; i < 4; ++i) {
             double T_drive = 0.0;
@@ -1663,13 +1689,9 @@ private:
             }
             // 前輪（FL, FR）は駆動力なし
 
-            // ブレーキトルク（回転と逆向き）
-            double T_brake = brake_pressure
-                           * params_.brake.caliper_area[i]
-                           * params_.brake.mu_pad
-                           * params_.brake.effective_radius[i];
-            T_brake *= (i < 2) ? params_.brake.balance : (1.0 - params_.brake.balance);
-            T_brake = std::copysign(T_brake, -state.omega[i]);
+            // ブレーキトルク（回転と逆向き）。tanh 平滑化で停止時の符号反転チャタリングを防ぐ (#36)
+            // ponytail: viscous near ω=0 (creeps under a net torque), add stick clamp if hill holds matter.
+            double T_brake = -T_brake_max[i] * std::tanh(state.omega[i] / params_.brake.omega_smooth);
 
             // タイヤ座標系の縦力を直接使用
             double T_tire = -tire_Fx_stage[i] * R_tire;

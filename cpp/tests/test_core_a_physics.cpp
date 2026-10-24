@@ -190,3 +190,53 @@ TEST(CoreA_ComplianceSteer, BothPathsEqualSinglePath) {
     const double ksteer_only = yaw_rate_with_compliance(1500.0, 0.0);
     EXPECT_NEAR(ksteer_only, kc_only, 0.02 * std::abs(kc_only));
 }
+
+// #36: once stopped, braked wheels hold omega ~ 0 (copysign used to chatter at T*dt/Iw ~ 1 rad/s).
+TEST(CoreA_Brake, StopAndHoldWithoutChatter) {
+    VehicleParams p = VehicleParams::default_fsae();
+    Vehicle14DOF_New veh(p);
+    veh.set_initial_velocity(2.0);
+    DriverInput in;
+    in.brake = 0.5;
+    in.gear = 3;
+    double max_hold = 0.0;
+    for (int k = 0; k < 3000; ++k) {
+        veh.step(0.001, in);
+        if (k >= 1000) {
+            for (double w : veh.state().omega) max_hold = std::max(max_hold, std::abs(w));
+        }
+    }
+    EXPECT_LT(max_hold, 0.01);
+    EXPECT_LT(std::abs(veh.state().vx), 0.01);
+}
+
+// #36: balance is the front/rear line-pressure ratio; geometry is carried by A*r.
+TEST(CoreA_Brake, BalanceIsPressureRatio) {
+    VehicleParams p = VehicleParams::default_fsae();
+    p.brake.balance = 0.6;
+    Vehicle14DOF_New veh(p);
+    const auto T = veh.compute_brake_torque_max(1e6);
+    const auto& b = p.brake;
+    const double pf = T[0] / (b.caliper_area[0] * b.mu_pad * b.effective_radius[0]);
+    const double pr = T[2] / (b.caliper_area[2] * b.mu_pad * b.effective_radius[2]);
+    EXPECT_NEAR(pf / (pf + pr), 0.6, 1e-12);
+    EXPECT_NEAR(0.5 * (pf + pr), 1e6, 1e-6);
+
+    // Pedal table + lag: pressure follows the table and lags with tau.
+    p.brake.pedal_table = {0.0, 1.0};
+    p.brake.pressure_table = {0.0, 4e6};
+    p.brake.pressure_lag_s = 0.03;
+    Vehicle14DOF_New lagged(p);
+    EXPECT_NEAR(lagged.compute_brake_pressure_cmd(0.5), 2e6, 1e-6);
+    p.brake.pressure_lag_s = 0.0;
+    Vehicle14DOF_New instant(p);
+    lagged.set_initial_velocity(15.0);
+    instant.set_initial_velocity(15.0);
+    DriverInput in;
+    in.brake = 1.0;
+    for (int k = 0; k < 30; ++k) {
+        lagged.step(0.001, in);
+        instant.step(0.001, in);
+    }
+    EXPECT_GT(lagged.state().omega[0], instant.state().omega[0] + 0.5);  // lagged pressure brakes less
+}
