@@ -7,15 +7,25 @@
 /// - 垂直運動: z（ヒーブ）、φ（ロール）、θ（ピッチ）
 ///
 /// 設計書参照: docs/設計書_統合版.md セクション3
+///
+/// スクリーニング専用（Issue #30）: FastLap（dt 10 ms）で GA 初期世代・感度スクリーニングに使う。
+/// 最終評価は 14DOF。ばね下・ARB・K&C・ねじり・熱・DRS・SAT は省略。空力は 14DOF と同じ
+/// AeroMap4D（ride height・roll・yaw 依存、モーメント込み）、タイヤは荷重感度 dmu_dFz 付き TMeasy、
+/// タイヤたわみは RK4 外で半陰的（後退 Euler）に更新するので低速/高速で stiff にならない。
+/// docs/performance_lightweight_sim_plan_2026-06-15.md の「準静的 Fz＋表タイヤ」案は未実装。
 
 #include "vehicle_params.hpp"
 #include "vehicle_state.hpp"
 #include "fsae/physics/tire/tmeasy.hpp"
+#include "fsae/physics/aero/aero_map_4d.hpp"
 #include "fsae/math/rotation.hpp"
 
 #include <cmath>
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <iostream>
+#include <string>
 
 namespace fsae::vehicle {
 
@@ -49,6 +59,7 @@ public:
     
     explicit Vehicle6DOF(const Params& params) : params_(params) {
         setup_tire_params();
+        setup_aero_map();
         compute_equilibrium();
     }
     
@@ -81,6 +92,15 @@ public:
         x = x + (dt / 6.0) * (k1 + 2*k2 + 2*k3 + k4);
         state_ = vector_to_state(x);
         time_ += dt;
+
+        // タイヤたわみ: dξ/dt = v_s − (v_c/L) ξ を後退 Euler で更新（無条件安定、Issue #30）
+        const double delta = input.steering;
+        const auto wheel_pos = get_wheel_positions();
+        for (int i = 0; i < 4; ++i) {
+            const auto sl = wheel_slip(state_, wheel_pos[i], i < 2 ? delta : 0.0, i);
+            state_.tire_xi[i] = (state_.tire_xi[i] + dt * sl.vsx) / (1.0 + dt * sl.vcx / params_.tire.Lx);
+            state_.tire_eta[i] = (state_.tire_eta[i] + dt * sl.vsy) / (1.0 + dt * sl.vcx / params_.tire.Ly);
+        }
     }
     
     void reset() {
@@ -99,7 +119,41 @@ private:
     double z_equilibrium_ = 0;  // 静的平衡位置
     std::array<double, 4> static_Fz_ = {0, 0, 0, 0};  // 静的荷重
     physics::tire::TMeasyParams<double> tire_params_;
-    
+    physics::aero::AeroMap4D<double> aero_map_;
+
+    struct WheelSlip { double vsx, vsy, vcx, c, s; };
+
+    /// 接地点スリップ速度（ホイール座標）
+    WheelSlip wheel_slip(const State6DOF& state, const Eigen::Vector3d& pos, double steer, int i) const {
+        const double vx_contact = state.vx - state.r * pos.y();
+        const double vy_contact = state.vy + state.r * pos.x();
+        const double c = std::cos(steer), s = std::sin(steer);
+        const double vx_wheel = c * vx_contact + s * vy_contact;
+        const double vy_wheel = -s * vx_contact + c * vy_contact;
+        const double omega_r = state.omega[i] * params_.tire.radius;
+        return {vx_wheel - omega_r, vy_wheel, std::abs(omega_r), c, s};
+    }
+
+    /// 14DOF と同じ AeroMap4D 設定（vehicle_14dof_new.hpp setup_aero_map と同一）
+    void setup_aero_map() {
+        aero_map_.params().rho = params_.aero.rho;
+        aero_map_.set_reference_conditions(params_.aero.reference_speed, params_.aero.reference_density);
+        aero_map_.set_coefficient_defaults(-std::abs(params_.aero.CL_A),
+                                           std::max(params_.aero.CD_A, 0.01),
+                                           params_.aero.aero_balance);
+        std::string mode = params_.aero.map_mode;
+        for (auto& ch : mode) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        if (mode == "direct_load" || mode == "force_map" || mode == "load_map") {
+            aero_map_.set_direct_load_defaults(
+                params_.aero.Fx_ref_total, params_.aero.Fy_ref_total, params_.aero.Fz_ref_total,
+                params_.aero.Mx_ref_total, params_.aero.My_ref_total, params_.aero.Mz_ref_total);
+        }
+        if (!params_.aero.aero_map_file.empty() && !aero_map_.load_from_json(params_.aero.aero_map_file)) {
+            std::cerr << "Failed to load aero map: " << params_.aero.aero_map_file
+                      << " (falling back to defaults)" << std::endl;
+        }
+    }
+
     static constexpr int FL = 0, FR = 1, RL = 2, RR = 3;
     
     void setup_tire_params() {
@@ -111,6 +165,7 @@ private:
         tire_params_.v_N = params_.tire.v_N;
         tire_params_.Cx = 80000.0;
         tire_params_.Cy = 22000.0;  // 実測ベース
+        tire_params_.dmu_dFz = params_.tire.dmu_dFz;  // 荷重感度（14DOF と同じ）
     }
     
     /// 静的平衡状態を計算
@@ -263,20 +318,8 @@ private:
             Fz_tire[i] = std::max(Fz_tire[i], 0.0);
             
             // ========== タイヤ力計算 ==========
-            // 接地点速度（車両座標系）
-            double vx_contact = state.vx - state.r * wheel_pos[i].y();
-            double vy_contact = state.vy + state.r * wheel_pos[i].x();
-            
-            // ホイール座標系に変換
-            double c = std::cos(steer[i]), s = std::sin(steer[i]);
-            double vx_wheel = c * vx_contact + s * vy_contact;
-            double vy_wheel = -s * vx_contact + c * vy_contact;
-            
-            // スリップ速度
-            double omega_r = state.omega[i] * params_.tire.radius;
-            double vsx = vx_wheel - omega_r;
-            double vsy = vy_wheel;
-            double vcx = std::abs(omega_r);
+            const auto sl = wheel_slip(state, wheel_pos[i], steer[i], i);
+            const double vsx = sl.vsx, vsy = sl.vsy, vcx = sl.vcx, c = sl.c, s = sl.s;
             
             // TMeasy力計算
             physics::tire::TMeasyState<double> tire_state{state.tire_xi[i], state.tire_eta[i]};
@@ -287,9 +330,7 @@ private:
             Fx_wheel[i] = c * tire_out.Fx - s * tire_out.Fy;
             Fy_wheel[i] = s * tire_out.Fx + c * tire_out.Fy;
             
-            // タイヤ変形量の微分
-            dxdt(16 + i) = vsx - (vcx / params_.tire.Lx) * state.tire_xi[i];
-            dxdt(20 + i) = vsy - (vcx / params_.tire.Ly) * state.tire_eta[i];
+            // タイヤ変形量は step() で半陰的に更新（RK4 段では凍結）
         }
         
         // ========== 合計力とモーメント ==========
@@ -314,14 +355,21 @@ private:
             Mz_total += wheel_pos[i].x() * Fy_wheel[i] - wheel_pos[i].y() * Fx_wheel[i];
         }
         
-        // 空力
-        double v2 = state.vx * state.vx + state.vy * state.vy;
-        double Fz_aero = 0.5 * params_.aero.rho * v2 * params_.aero.CL_A;  // ダウンフォース
-        double Fx_aero = -0.5 * params_.aero.rho * v2 * params_.aero.CD_A;  // 抵抗
-        
-        Fx_total += Fx_aero;
-        Fz_total += Fz_aero;  // ダウンフォースは+Z（下向き）
-        
+        // 空力: 14DOF と同じ AeroMap4D（ride height・roll・yaw 依存、モーメント込み）
+        const double v_mag = std::hypot(state.vx, state.vy);
+        const double rh_front = params_.aero.nominal_front_ride_height_mm
+                              - 0.5 * (susp_travel[FL] + susp_travel[FR]) * 1000.0;
+        const double rh_rear = params_.aero.nominal_rear_ride_height_mm
+                             - 0.5 * (susp_travel[RL] + susp_travel[RR]) * 1000.0;
+        const double yaw = v_mag > 0.1 ? std::atan2(state.vy, state.vx) : 0.0;
+        const auto aero = aero_map_.compute_forces(v_mag, rh_front, rh_rear, state.phi, yaw, false);
+        Fx_total += aero.Fx;  // ドラッグ（負）
+        Fy_total += aero.Fy;
+        Fz_total -= aero.Fz;  // 負のリフト = 下向き +Z
+        Mx_total += aero.Mx;
+        My_total += aero.My;
+        Mz_total += aero.Mz;
+
         // 重力（車体座標系）
         Eigen::Vector3d g_body = math::gravity_in_body(euler, g);
         
