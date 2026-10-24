@@ -676,6 +676,38 @@ TEST_F(TireThermalTest, CoolingFromConvection) {
     EXPECT_LT(T_final, T_initial);
 }
 
+TEST_F(TireThermalTest, JsonParamsChangeResult) {
+    const auto run = [](const TireThermalParams& p) {
+        TireThermalIntegrator thermal(p);
+        std::array<TireForces, 4> forces{};
+        std::array<TireSlipInfo, 4> slip{};
+        for (auto& f : forces) { f.Fy = 1000.0; }
+        for (auto& s : slip) { s.vsy = 0.5; s.Fz = 800.0; }
+        for (int k = 0; k < 2000; ++k) { thermal.update(0.001, forces, slip, 15.0, 25.0); }
+        return thermal.get_temperature(0);
+    };
+    const auto defaults = TireThermalParams::from_json(nlohmann::json::object());
+    EXPECT_DOUBLE_EQ(defaults.m_tread, TireThermalParams{}.m_tread);
+    const double base = run(defaults);
+    const auto heavier = TireThermalParams::from_json(nlohmann::json{{"m_tread", 1.0}});
+    EXPECT_LT(run(heavier), base);
+    // Higher pressure -> smaller contact patch -> less road conduction -> hotter.
+    const auto hard = TireThermalParams::from_json(nlohmann::json{{"pressure_kpa", 140.0}});
+    EXPECT_GT(run(hard), base);
+}
+
+TEST_F(TireThermalTest, TwoNodeBulkLagsSurface) {
+    params.m_bulk = 2.0;
+    TireThermalIntegrator thermal(params);
+    std::array<TireForces, 4> forces{};
+    std::array<TireSlipInfo, 4> slip{};
+    for (auto& f : forces) { f.Fy = 1000.0; }
+    for (auto& s : slip) { s.vsy = 0.5; s.Fz = 800.0; }
+    for (int k = 0; k < 5000; ++k) { thermal.update(0.001, forces, slip, 15.0, 25.0); }
+    EXPECT_GT(thermal.get_bulk_temperature(0), params.T_initial);
+    EXPECT_GT(thermal.get_temperature(0), thermal.get_bulk_temperature(0));
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
