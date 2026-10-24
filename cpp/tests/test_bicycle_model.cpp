@@ -267,6 +267,7 @@ TEST(BicyclePreviewContractTest, AngleModeYawResponseMatches14DOFConvention) {
     vehicle_params.suspension.static_toe = {0.0, 0.0, 0.0, 0.0};
     vehicle_params.aero.CL_A = 0.0;
     vehicle_params.aero.CD_A = 0.0;
+    vehicle_params.powertrain.lsd_preload = 0.0;  // preview assumes an open diff
 
     Vehicle14DOF_New vehicle(vehicle_params);
     vehicle.reset();
@@ -280,6 +281,7 @@ TEST(BicyclePreviewContractTest, AngleModeYawResponseMatches14DOFConvention) {
     BicycleModel6DOF preview(BicycleParams::from_vehicle_params(vehicle_params));
     BicycleState6DOF preview_state{0.0, 0.0, 0.0, 15.0, 0.0, 0.0};
     BicycleControl preview_input{input.steering, 0.0};
+    input.gear = 0;  // neutral: the preview has no engine braking
 
     constexpr double dt = 0.001;
     constexpr int steps = 250;

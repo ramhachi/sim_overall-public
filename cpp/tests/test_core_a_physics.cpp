@@ -410,7 +410,7 @@ TEST(CoreA_Equilibrium, NoStartupBounceAtSpeed) {
     Vehicle14DOF_New veh(p);
     veh.set_initial_velocity(15.0);
     DriverInput in;
-    in.gear = 3;
+    in.gear = 0;  // neutral: isolate equilibrium from engine braking (#34)
     double vz = 0.0, q = 0.0;
     for (int k = 0; k < 300; ++k) {
         veh.step(0.001, in);
