@@ -63,10 +63,19 @@ struct SuspensionParams {
     // ばね
     std::array<double, 4> k_spring = {25000, 25000, 30000, 30000};  // [N/m]
     std::array<double, 4> motion_ratio = {0.85, 0.85, 0.90, 0.90};
+    // MR(travel) テーブル（任意, #10）。travel = 平衡からのホイールストローク [m]（+ 圧縮）。
+    // 空なら一定 MR。ばね力は F_wheel = MR(x)*(F_static/MR(0) + k*∫_0^x MR)。
+    std::vector<double> motion_ratio_table_travel = {};
+    std::array<std::vector<double>, 4> motion_ratio_table = {};
+    // true: ダンパー(Bouc-Wen)/LuGre/バンプストップも素子座標 (MR*x, MR*v) で評価し MR 倍で
+    // ホイールへ戻す（c0, bump_stop_* は素子側の値）。false: 旧挙動（ホイール座標のまま）
+    bool mr_applies_to_dampers = true;
     
     // アンチロールバー
-    double k_arb_f = 500.0;     // フロントARB（アクスル等価ロール剛性）[Nm/rad]
-    double k_arb_r = 300.0;     // リアARB（アクスル等価ロール剛性）[Nm/rad]
+    // ARB ロール剛性 [Nm/rad]。ホイールには kc_*.arb_motion_ratio^2 倍で効く（#10）。
+    // arb_motion_ratio = 1（既定）ならアクスル等価値として従来どおり
+    double k_arb_f = 500.0;     // フロントARB [Nm/rad]
+    double k_arb_r = 300.0;     // リアARB [Nm/rad]
     
     // Bouc-Wenダンパー（設計書セクション5.3 / 13.3準拠）
     // F_damper = c0 * v + k0 * x + alpha * z
@@ -92,8 +101,10 @@ struct SuspensionParams {
     int lugre_substeps = 1;         // サブステップ数（1=通常、10=0.1ms刻み）
     
     // バンプストップ
-    double bump_stop_gap = 0.03;    // [m]
-    double bump_stop_k = 100000.0;  // [N/m]
+    double bump_stop_gap = 0.03;    // 圧縮側ギャップ [m]
+    double bump_stop_k = 100000.0;  // 圧縮側剛性 [N/m]
+    double bump_stop_gap_rebound = -1.0;  // 伸び側ギャップ [m]（<0 → bump_stop_gap と同値）
+    double bump_stop_k_rebound = -1.0;    // 伸び側剛性 [N/m]（<0 → bump_stop_k と同値）
 
     // ジオメトリ（ガイド §2.4, §7）
     // キャンバーゲイン: サスペンションストローク1mあたりのキャンバー角変化 [rad/m]
@@ -454,6 +465,20 @@ struct VehicleParams {
             // バンプストップ & ジオメトリ
             if (s.contains("bump_stop_gap")) p.suspension.bump_stop_gap = s["bump_stop_gap"];
             if (s.contains("bump_stop_k")) p.suspension.bump_stop_k = s["bump_stop_k"];
+            if (s.contains("bump_stop_gap_rebound")) p.suspension.bump_stop_gap_rebound = s["bump_stop_gap_rebound"];
+            if (s.contains("bump_stop_k_rebound")) p.suspension.bump_stop_k_rebound = s["bump_stop_k_rebound"];
+            if (s.contains("mr_applies_to_dampers")) p.suspension.mr_applies_to_dampers = s["mr_applies_to_dampers"];
+            if (s.contains("motion_ratio_table")) {
+                auto& mt = s["motion_ratio_table"];
+                p.suspension.motion_ratio_table_travel = mt.at("travel").get<std::vector<double>>();
+                const std::array<std::string, 4> keys = {"FL", "FR", "RL", "RR"};
+                for (int i = 0; i < 4; ++i) {
+                    p.suspension.motion_ratio_table[i] = mt.at(keys[i]).get<std::vector<double>>();
+                    if (p.suspension.motion_ratio_table[i].size() != p.suspension.motion_ratio_table_travel.size()) {
+                        throw std::runtime_error("suspension.motion_ratio_table." + keys[i] + " size != travel size");
+                    }
+                }
+            }
             if (s.contains("camber_gain") && s["camber_gain"].is_array()) {
                 for(int i=0; i<4; ++i) p.suspension.camber_gain[i] = s["camber_gain"][i];
             }

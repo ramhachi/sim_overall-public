@@ -320,3 +320,60 @@ TEST(CoreA_Tire, RollingResistanceAndEffectiveRadius) {
     const double kappa = (veh.state().omega[0] * Re - veh.state().vx) / veh.state().vx;
     EXPECT_LT(std::abs(kappa), 2e-3);
 }
+
+namespace {
+State14DOF run_bumpy(const VehicleParams& p) {
+    Vehicle14DOF_New veh(p);
+    veh.set_initial_velocity(12.0);
+    DriverInput in;
+    in.gear = 3;
+    for (int k = 0; k < 1500; ++k) {
+        in.steering = (k > 200 && k < 700) ? 0.06 : -0.03;
+        in.brake = (k > 900 && k < 1100) ? 0.4 : 0.0;
+        veh.step(0.001, in);
+    }
+    return veh.state();
+}
+}  // namespace
+
+// #10: a constant MR(travel) table reproduces the constant-MR model.
+TEST(CoreA_MotionRatio, ConstantTableMatchesConstantMR) {
+    VehicleParams p = VehicleParams::default_fsae();
+    const auto ref = run_bumpy(p);
+    p.suspension.motion_ratio_table_travel = {-0.05, 0.0, 0.05};
+    for (int i = 0; i < 4; ++i) {
+        const double mr = p.suspension.motion_ratio[i];
+        p.suspension.motion_ratio_table[i] = {mr, mr, mr};
+    }
+    const auto tab = run_bumpy(p);
+    EXPECT_NEAR(tab.phi, ref.phi, 1e-9);
+    EXPECT_NEAR(tab.r, ref.r, 1e-9);
+    EXPECT_NEAR(tab.z, ref.z, 1e-9);
+}
+
+// #10: spring stroke integrates MR exactly; bump/rebound gaps and rates are separate.
+TEST(CoreA_MotionRatio, RisingRateSpringAndAsymmetricBumpStop) {
+    VehicleParams p = VehicleParams::default_fsae();
+    p.suspension.motion_ratio_table_travel = {0.0, 0.1};
+    for (int i = 0; i < 4; ++i) p.suspension.motion_ratio_table[i] = {0.8, 1.0};
+    p.suspension.bump_stop_gap_rebound = 0.05;
+    p.suspension.bump_stop_k_rebound = 20000.0;
+    Vehicle14DOF_New veh(p);
+    EXPECT_NEAR(veh.motion_ratio_at(0, 0.05), 0.9, 1e-12);
+    EXPECT_NEAR(veh.spring_stroke(0, 0.1), 0.09, 1e-12);       // trapezoid 0.1*(0.8+1.0)/2
+    EXPECT_NEAR(veh.spring_stroke(0, -0.01), -0.008, 1e-12);   // constant extrapolation
+    EXPECT_NEAR(veh.compute_bumpstop_force(0.04, 0), 100000.0 * 0.01, 1e-9);
+    EXPECT_NEAR(veh.compute_bumpstop_force(-0.04, 0), 0.0, 1e-12);
+    EXPECT_NEAR(veh.compute_bumpstop_force(-0.06, 0), -20000.0 * 0.01, 1e-9);
+}
+
+// #10: report the effect of applying MR to dampers/LuGre/bump (default on).
+TEST(CoreA_MotionRatio, ReportDamperMotionRatioEffect) {
+    VehicleParams p = VehicleParams::default_fsae();
+    const auto on = run_bumpy(p);
+    p.suspension.mr_applies_to_dampers = false;
+    const auto off = run_bumpy(p);
+    std::cout << "[CORE-A] MR->dampers on: phi=" << on.phi << " r=" << on.r << " z=" << on.z
+              << " | off: phi=" << off.phi << " r=" << off.r << " z=" << off.z << std::endl;
+    EXPECT_NE(on.phi, off.phi);
+}

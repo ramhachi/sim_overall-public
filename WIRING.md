@@ -28,3 +28,20 @@ Changes other packages must apply so their outputs match the new 14DOF runtime s
      `-/+ Fx_wheel * anti * h_cg / L` (front/rear). Total load transfer no longer depends on them.
    - Planned upgrade: export `RCz(heave, roll)`, `anti(travel)`, `tan(theta_IC)(travel, roll)` LUTs
      from the same sweep (schema not added yet).
+
+## Anyone writing vehicle JSON (MATLAB pipeline, GA, `optimized_*.json`)
+
+3. **#10 element-side damper/bump values.** With `suspension.mr_applies_to_dampers = true`
+   (default) `c0`, Bouc-Wen, LuGre and `bump_stop_*` are **damper/element-side** values
+   (wheel force = MR·F(MR·x, MR·v)). If an exporter wrote wheel-rate values, either convert
+   (`c0_elem = c0_wheel / MR^2`, `gap_elem = MR * gap_wheel`) or set the flag to `false`.
+   New optional keys: `bump_stop_gap_rebound`, `bump_stop_k_rebound` (default = bump side),
+   `motion_ratio_table: {travel: [...], FL: [...], FR: [...], RL: [...], RR: [...]}`
+   (travel = wheel stroke from equilibrium, + compression).
+   `k_arb_f/r` are now scaled by `kc.<axle>.arb_motion_ratio^2` (default 1 → unchanged); an
+   exporter that sets `arb_motion_ratio != 1` must write `k_arb_*` as bar-side stiffness.
+4. Other new optional keys (all default to legacy behaviour except `tire.C_rr`):
+   `brake.pedal_table`, `brake.pressure_table`, `brake.pressure_lag_s`, `brake.omega_smooth`;
+   `powertrain.I_engine`, `powertrain.I_gearbox`, `powertrain.shift_time_s`;
+   `mass.Iw` as 4-array; `tire.C_rr` (default 0.015 — replace with coast-down fit).
+   `brake.balance` is now the front/rear master-cylinder pressure ratio (0.5 neutral; #36).

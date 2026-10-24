@@ -267,11 +267,14 @@ public:
     void step_adaptive(double dt, const DriverInput& input) {
         // バンプストップ接触判定
         bool bumpstop_contact = false;
-        const double bump_threshold = 0.9 * params_.suspension.bump_stop_gap;
+        const auto& sp = params_.suspension;
+        const double bump_threshold = 0.9 * std::min(sp.bump_stop_gap,
+            sp.bump_stop_gap_rebound < 0.0 ? sp.bump_stop_gap : sp.bump_stop_gap_rebound);
 
         for (int i = 0; i < 4; ++i) {
-            double susp_travel = std::abs(state_.z - state_.z_u[i] - (z_equilibrium_ - z_u_equilibrium_[i]));
-            if (susp_travel > bump_threshold) {
+            const double x = state_.z - state_.z_u[i] - (z_equilibrium_ - z_u_equilibrium_[i]);
+            // Gaps live in element coordinates when MR applies to the bump stop (#10).
+            if (std::abs(damper_motion_ratio(i, x) * x) > bump_threshold) {
                 bumpstop_contact = true;
                 break;
             }
@@ -522,7 +525,10 @@ public:
         double roll_angle_f = roll_diff_f / track_f;
         // k_arb is the axle-equivalent roll stiffness [Nm/rad]; the factor 1/2
         // converts it to the equal-and-opposite wheel-force couple.
-        double torque_arb_f = 0.5 * params_.suspension.k_arb_f * roll_angle_f;
+        // k_arb is at the bar; the wheel sees it through arb_motion_ratio^2 (#10, default 1).
+        const double mr_arb_f = params_.suspension.kc_front.arb_motion_ratio;
+        const double mr_arb_r = params_.suspension.kc_rear.arb_motion_ratio;
+        double torque_arb_f = 0.5 * params_.suspension.k_arb_f * mr_arb_f * mr_arb_f * roll_angle_f;
         double half_track_f = track_f / 2;
         F_arb[FL] = torque_arb_f / half_track_f;
         F_arb[FR] = -torque_arb_f / half_track_f;
@@ -530,7 +536,7 @@ public:
         double track_r = params_.mass.track_r;
         double roll_diff_r = susp_travel[RL] - susp_travel[RR];
         double roll_angle_r = roll_diff_r / track_r;
-        double torque_arb_r = 0.5 * params_.suspension.k_arb_r * roll_angle_r;
+        double torque_arb_r = 0.5 * params_.suspension.k_arb_r * mr_arb_r * mr_arb_r * roll_angle_r;
         double half_track_r = track_r / 2;
         F_arb[RL] = torque_arb_r / half_track_r;
         F_arb[RR] = -torque_arb_r / half_track_r;
@@ -968,17 +974,46 @@ private:
     }
     
     // ======== バンプストップ力 ========
-    double compute_bumpstop_force(double susp_travel_from_eq, int wheel_idx) const {
-        double gap = params_.suspension.bump_stop_gap;
-        double k_bump = params_.suspension.bump_stop_k;
-
-        if (susp_travel_from_eq > gap) {
-            return k_bump * (susp_travel_from_eq - gap);
-        } else if (susp_travel_from_eq < -gap) {
-            return k_bump * (susp_travel_from_eq + gap);
-        }
+public:  // suspension element helpers (public for tests)
+    /// Bump stop on the element stroke x (+ compression), separate bump/rebound gap and rate (#10).
+    double compute_bumpstop_force(double x, int /*wheel_idx*/) const {
+        const auto& sp = params_.suspension;
+        const double gap_rb = sp.bump_stop_gap_rebound < 0.0 ? sp.bump_stop_gap : sp.bump_stop_gap_rebound;
+        const double k_rb = sp.bump_stop_k_rebound < 0.0 ? sp.bump_stop_k : sp.bump_stop_k_rebound;
+        if (x > sp.bump_stop_gap) return sp.bump_stop_k * (x - sp.bump_stop_gap);
+        if (x < -gap_rb) return k_rb * (x + gap_rb);
         return 0;
     }
+
+    /// Motion ratio at wheel travel x from equilibrium (table or constant).
+    double motion_ratio_at(int i, double x) const {
+        return interp1_clamped(params_.suspension.motion_ratio_table_travel,
+                               params_.suspension.motion_ratio_table[i], x,
+                               params_.suspension.motion_ratio[i]);
+    }
+
+    /// MR applied to damper/LuGre/bump elements (1 = legacy wheel-coordinate elements).
+    double damper_motion_ratio(int i, double x) const {
+        return params_.suspension.mr_applies_to_dampers ? motion_ratio_at(i, x) : 1.0;
+    }
+
+    /// Spring stroke s(x) = ∫_0^x MR(u) du (exact for the piecewise-linear table).
+    double spring_stroke(int i, double x) const {
+        const auto& t = params_.suspension.motion_ratio_table_travel;
+        const auto& m = params_.suspension.motion_ratio_table[i];
+        if (t.empty()) return params_.suspension.motion_ratio[i] * x;
+        auto integral_from_t0 = [&](double q) {
+            if (q <= t[0]) return m[0] * (q - t[0]);
+            double acc = 0.0;
+            for (size_t k = 1; k < t.size(); ++k) {
+                if (q <= t[k]) return acc + 0.5 * (m[k - 1] + motion_ratio_at(i, q)) * (q - t[k - 1]);
+                acc += 0.5 * (m[k - 1] + m[k]) * (t[k] - t[k - 1]);
+            }
+            return acc + m.back() * (q - t.back());
+        };
+        return integral_from_t0(x) - integral_from_t0(0.0);
+    }
+private:
 
     /// @brief フレームねじりを考慮した前後ロール角の計算（Phase A1）
     /// @param phi_body 車体ロール角 [rad]
@@ -1283,32 +1318,36 @@ private:
                 pou_displacement_[i] = pou_disp;
             }
 
-            // スプリング力（pou_dispを反映）
-            double mr = params_.suspension.motion_ratio[i];
-            double k_eff = params_.suspension.k_spring[i] * mr * mr;
-            F_spring[i] = static_Fz_[i] + k_eff * effective_susp_travel_from_eq;
+            // スプリング力（pou_dispを反映）: F_wheel = MR(x)*(F_static/MR(0) + k*∫MR) (#10)
+            const double x_eff = effective_susp_travel_from_eq;
+            const double mr = motion_ratio_at(i, x_eff);
+            F_spring[i] = mr * (static_Fz_[i] / motion_ratio_at(i, 0.0)
+                                + params_.suspension.k_spring[i] * spring_stroke(i, x_eff));
             if (update_cache) {
                 spring_forces_[i] = F_spring[i];
             }
 
+            // 素子座標で評価し MR 倍でホイールへ: F_wheel = MR*F_elem(MR*x, MR*v) (#10)
+            const double mr_d = damper_motion_ratio(i, x_eff);
+
             // Bouc-Wenダンパー力（変位にPOU反映、速度はquasi-static近似で変更なし）
-            auto bw_out = compute_bouc_wen(bw_params_[i], effective_susp_travel_from_eq, susp_velocity, state.damper_z[i]);
-            F_bw[i] = bw_out.force;
+            auto bw_out = compute_bouc_wen(bw_params_[i], mr_d * x_eff, mr_d * susp_velocity, state.damper_z[i]);
+            F_bw[i] = mr_d * bw_out.force;
             dz_bw[i] = bw_out.dz_dt;
             if (update_cache) {
                 bw_forces_[i] = F_bw[i];
             }
 
             // LuGre摩擦力
-            auto lugre_out = compute_lugre(lugre_params_[i], susp_velocity, state.friction_z[i]);
-            F_lugre[i] = lugre_out.force;
+            auto lugre_out = compute_lugre(lugre_params_[i], mr_d * susp_velocity, state.friction_z[i]);
+            F_lugre[i] = mr_d * lugre_out.force;
             dz_lugre[i] = lugre_out.dz_dt;
             if (update_cache) {
                 lugre_forces_[i] = F_lugre[i];
             }
 
             // バンプストップ力（POU反映）
-            F_bump[i] = compute_bumpstop_force(effective_susp_travel_from_eq, i);
+            F_bump[i] = mr_d * compute_bumpstop_force(mr_d * x_eff, i);
             
             // タイヤ垂直力
             double tire_deflection = state.z_u[i] - z_u_equilibrium_[i];
