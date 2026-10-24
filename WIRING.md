@@ -46,3 +46,16 @@ Apply these in `cpp/include/fsae/vehicle/vehicle_params.hpp` and
      balance, so 0 is fine.)
    - `compute_derivatives(state_, input, true)` is already called right before, so the
      caches hold the post-step values.
+
+## #22 TMeasy Cy units
+
+- `vehicle_params.hpp:216` `double Cy = 22000.0; // 横剛性 [N/rad]` is copied into
+  `TMeasyParams::Cy` (`vehicle_14dof_new.hpp:707`), which is a carcass stiffness [N/m].
+  Change to `double Cy = 44900.0; // 接地面横剛性 [N/m] = Cα/(2·Ly), Cα 実測 22436 N/rad`.
+  This only affects TMeasy test builds (`FSAE_TEST_TIRE_MODEL_TYPE="tmeasy"`); expect
+  regression numbers in TMeasy-based vehicle tests to shift (stiffer front/rear axle).
+  `bicycle_model.hpp:100` already uses `2·Cy·Ly` as Cα, so it becomes consistent too.
+- JSON presets with `"Cy": 22000` (`correlation/params_correlated_template.json`,
+  `scratch/pinn_benchmark_params.json`) should become 44900 for the same reason.
+- `vehicle_3dof/6dof/8dof*.hpp` hard-code `Cy = 22000` / `60000`; legacy models, leave
+  unless their owner wants the fix (same formula).

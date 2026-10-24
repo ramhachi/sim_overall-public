@@ -99,6 +99,17 @@ TEST_F(TMeasyTest, LoadSensitivityUsesNominalLoadAsReference) {
     EXPECT_NEAR(std::abs(out_high.Fy), expected_mu_high * high_load, 1e-9);
 }
 
+// #22: Cy is a carcass stiffness [N/m]; the steady-state cornering stiffness
+// 2·Cy·Ly must reproduce the measured 22436 N/rad (the old Cy=22000 gave 11000).
+TEST_F(TMeasyTest, SteadyStateCorneringStiffnessMatchesMeasured) {
+    const double alpha = 1e-3;  // [rad]
+    const double vcx = 10.0;
+    TMeasyState<double> state{0.0, params.Ly * std::tan(alpha)};  // deta_dt = 0
+    auto out = compute_tmeasy(params, state, params.Fz_nom, 0.0, vcx * std::tan(alpha), vcx);
+    EXPECT_NEAR(out.deta_dt, 0.0, 1e-12);
+    EXPECT_NEAR(std::abs(out.Fy) / alpha, 22436.0, 0.01 * 22436.0);
+}
+
 TEST_F(TMeasyTest, BatchComputation) {
     double xi[4] = {0, 0.01, 0.02, 0.03};
     double eta[4] = {0.01, 0.02, 0.03, 0.04};
