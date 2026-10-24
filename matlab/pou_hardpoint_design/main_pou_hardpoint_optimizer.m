@@ -236,7 +236,7 @@ function results = main_pou_hardpoint_optimizer(params_json_file, options)
     M_pivot_chassis = upright_zero.R_upright * M_pivot_upright + upright_zero.t_upright;
 
     % Compute final curves and metrics
-    [jack_curve, camber_curve, pushrod_lengths] = ...
+    [jack_curve, camber_curve, pushrod_lengths, damper_lengths] = ...
         forward_kinematics(best_x, geom, delta_range);
 
     % Polynomial targets
@@ -252,12 +252,101 @@ function results = main_pou_hardpoint_optimizer(params_json_file, options)
     [c_constraints, ~] = constraint_rod_misalignment(best_x, geom, delta_range);
     max_rod_angle_deg = rad2deg(c_constraints(1) + geom.rod_end_angle_max);
 
-    % Installation ratio (at zero steering)
     idx_zero = find(abs(delta_range) < 1e-6, 1);
-    OM = M_pivot_chassis - geom.kingpin_axis.origin;
-    proj = dot(OM, geom.kingpin_axis.direction) * geom.kingpin_axis.direction;
-    perp_dist = norm(OM - proj);
-    installation_ratio = perp_dist / pushrod_lengths(idx_zero);
+
+    % Dense closed-chain LUT for the runtime (#44): travel x steer.
+    if isfield(options, 'travel_range_m') && ~isempty(options.travel_range_m)
+        travel_range = options.travel_range_m;
+    else
+        travel_range = 0.01;
+    end
+    if isfield(options, 'rack_range_m') && ~isempty(options.rack_range_m)
+        rack_range = options.rack_range_m;
+    else
+        rack_range = 0.01;
+    end
+    if isfield(options, 'n_steer_lut') && ~isempty(options.n_steer_lut)
+        n_steer_lut = options.n_steer_lut;
+    else
+        n_steer_lut = 21;
+    end
+    travel_lut = linspace(-travel_range, travel_range, 13)';
+    rack_lut = linspace(-rack_range, rack_range, 13)';
+    raw_lut = solve_pou_closed_chain(geom, best_x, struct( ...
+        'travel_m', travel_lut, 'rack_m', rack_lut, 'residual_tolerance', 1e-4));
+    max_steer = max(abs(raw_lut.steer_rad(isfinite(raw_lut.steer_rad))));
+    if isempty(max_steer) || ~isfinite(max_steer) || max_steer < 1e-6
+        max_steer = max(abs(rack_lut)) * 4.0;
+    end
+    steer_grid = linspace(-max_steer, max_steer, n_steer_lut);
+    mr_grid = nan(numel(travel_lut), numel(steer_grid));
+    jack_grid = nan(size(mr_grid));
+    camber_grid = nan(size(mr_grid));
+    damper_grid = nan(size(mr_grid));
+    arb_grid = nan(size(mr_grid));
+    for it = 1:numel(travel_lut)
+        row_steer = raw_lut.steer_rad(it, :);
+        if any(~isfinite(row_steer))
+            continue;
+        end
+        if max(row_steer) - min(row_steer) < 1e-9
+            mr_grid(it, :) = mean(raw_lut.mr(it, :), 'omitnan');
+            jack_grid(it, :) = mean(raw_lut.jack_m(it, :), 'omitnan');
+            camber_grid(it, :) = mean(raw_lut.camber_rad(it, :), 'omitnan');
+            damper_grid(it, :) = mean(raw_lut.damper_length_m(it, :), 'omitnan');
+            continue;
+        end
+        % Remove duplicate steer samples before interpolation.
+        [row_steer, iu] = unique(row_steer);
+        row_mr_all = raw_lut.mr(it, :); row_jack_all = raw_lut.jack_m(it, :);
+        row_camber_all = raw_lut.camber_rad(it, :); row_damper_all = raw_lut.damper_length_m(it, :);
+        row_arb_all = raw_lut.arb_mr(it, :);
+        if all(diff(row_steer) <= 0)
+            row_steer = fliplr(row_steer);
+            row_mr = fliplr(row_mr_all(iu));
+            row_jack = fliplr(row_jack_all(iu));
+            row_camber = fliplr(row_camber_all(iu));
+            row_damper = fliplr(row_damper_all(iu));
+            row_arb = fliplr(row_arb_all(iu));
+        else
+            row_mr = row_mr_all(iu);
+            row_jack = row_jack_all(iu);
+            row_camber = row_camber_all(iu);
+            row_damper = row_damper_all(iu);
+            row_arb = row_arb_all(iu);
+        end
+        mr_grid(it, :) = interp1(row_steer, row_mr, steer_grid, 'linear', 'extrap');
+        jack_grid(it, :) = interp1(row_steer, row_jack, steer_grid, 'linear', 'extrap');
+        camber_grid(it, :) = interp1(row_steer, row_camber, steer_grid, 'linear', 'extrap');
+        damper_grid(it, :) = interp1(row_steer, row_damper, steer_grid, 'linear', 'extrap');
+        if any(isfinite(row_arb))
+            arb_grid(it, :) = interp1(row_steer, row_arb, steer_grid, 'linear', 'extrap');
+        end
+    end
+    lut = struct();
+    lut.schema_version = 'pou_lut/v1';
+    lut.travel_m = travel_lut(:)';
+    lut.steer_rad = steer_grid;
+    lut.mr = mr_grid;
+    lut.jack_m = jack_grid;
+    lut.camber_rad = camber_grid;
+    lut.damper_length_m = damper_grid;
+    lut.arb_mr = arb_grid;
+    lut.rack_m = rack_lut(:)';
+    lut.layout = 'rows=travel_m, cols=steer_rad';
+    lut.bellcrank = raw_lut.bellcrank;
+    lut.converged = all(isfinite(mr_grid(:))) && all(isfinite(jack_grid(:)));
+    results.pou_lut = lut;
+    results.bellcrank = raw_lut.bellcrank;
+
+    % Installation ratio at the nominal operating point (average of +/-1 mm
+    % because the central-difference MR is exactly zero at the symmetric centre).
+    mr_mid = mean(mr_grid, 2, 'omitnan');
+    installation_ratio = mean(abs(mr_mid(isfinite(mr_mid))));
+    if ~isfinite(installation_ratio)
+        valid = mr_grid(isfinite(mr_grid));
+        installation_ratio = median(valid);
+    end
 
     % Packaging validation
     [packaging_valid, violations] = validate_packaging(best_x, geom, delta_range);
@@ -276,6 +365,7 @@ function results = main_pou_hardpoint_optimizer(params_json_file, options)
     results.optimization_exitflag = best_exitflag;
     results.optimization_time_s = solve_time;
     results.pushrod_length_nominal_m = pushrod_lengths(idx_zero);
+    results.damper_length_nominal_m = damper_lengths(idx_zero);
 
     % Store curves for plotting
     results.delta_range_deg = rad2deg(delta_range);

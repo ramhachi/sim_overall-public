@@ -1,59 +1,58 @@
-function [jack_curve, camber_curve, pushrod_lengths] = forward_kinematics(design_vars, geom, delta_range)
-% FORWARD_KINEMATICS - Compute jack-up and camber curves from hardpoint coordinates
+function [jack_curve, camber_curve, pushrod_lengths, damper_lengths] = ...
+        forward_kinematics(design_vars, geom, delta_range)
+% FORWARD_KINEMATICS POU rocker kinematics over a steering sweep.
 %
-% Uses the double-wishbone solver to get upright rigid-body transform,
-% then computes M-pivot position in chassis frame and pushrod length.
-% Camber is extracted from the change in kingpin axis tilt.
-%
-% INPUTS:
-%   design_vars - [Xm, Ym, Zm, Xb, Yb, Zb] - 6x1 design variables [m]
-%   geom        - Suspension geometry struct from define_suspension_geometry()
-%   delta_range - Nx1 steering angle array [rad]
-%
-% OUTPUTS:
-%   jack_curve      - Nx1 pushrod displacement [m] (positive = compression)
-%   camber_curve    - Nx1 camber angle [rad]
-%   pushrod_lengths - Nx1 absolute pushrod length [m]
+% The pushrod is rigid: the rocker rotates so its length stays constant.
+% Jack is the resulting damper compression (positive = shorter damper), not
+% a straight-line pushrod-length proxy. Camber comes from the upright pose
+% and is diagnostic only: the POU linkage does not change camber (#44).
 
-    M_pivot_upright = design_vars(1:3);
-    bellcrank_pivot = design_vars(4:6);
-
-    N = length(delta_range);
+    M_local = design_vars(1:3);
+    pushrod_pin = design_vars(4:6);
+    N = numel(delta_range);
     jack_curve = zeros(N, 1);
     camber_curve = zeros(N, 1);
     pushrod_lengths = zeros(N, 1);
+    damper_lengths = zeros(N, 1);
 
-    % Nominal state (zero steer)
-    upright_nominal = solve_upright_position_3d(0.0, geom);
-    M_pivot_chassis_nominal = upright_nominal.R_upright * M_pivot_upright + upright_nominal.t_upright;
-    L_pushrod_nominal = norm(M_pivot_chassis_nominal - bellcrank_pivot);
-
-    % Set up nominal wheel spindle vector (points outwards)
+    upright0 = solve_upright_position_3d(0.0, geom);
+    M0 = upright0.R_upright * M_local + upright0.t_upright;
+    bc = derive_bellcrank_geometry(pushrod_pin, pushrod_pin - M0, geom);
+    Lp0 = norm(M0 - bc.pushrod_pin);
+    Ld0 = norm(bc.damper_pin - bc.damper_chassis_mount);
     if geom.is_left
         spindle_nominal = [0; -1; 0];
     else
         spindle_nominal = [0; 1; 0];
     end
-
-    for i = 1:N
-        delta = delta_range(i);
-
-        upright_state = solve_upright_position_3d(delta, geom);
-
-        % M-pivot in chassis frame via rigid body transform
-        M_pivot_chassis = upright_state.R_upright * M_pivot_upright + upright_state.t_upright;
-
-        % Pushrod length
-        L_pushrod = norm(M_pivot_chassis - bellcrank_pivot);
-        pushrod_lengths(i) = L_pushrod;
-
-        % Jack-up (positive = compression = shorter pushrod)
-        jack_curve(i) = -(L_pushrod - L_pushrod_nominal);
-
-        % Camber from wheel spindle tilt
-        % The wheel spindle vector defines the outward axle.
-        % Positive camber = top of wheel tilts OUT = spindle tilts DOWN (+Z).
-        spindle_now = upright_state.R_upright * spindle_nominal;
-        camber_curve(i) = asin(spindle_now(3));
+    if isfield(geom, 'Spindle_Dir') && ~isempty(geom.Spindle_Dir)
+        spindle_nominal = geom.Spindle_Dir(:) / max(norm(geom.Spindle_Dir), 1e-9);
     end
+
+    theta_guess = 0.0;
+    for i = 1:N
+        upright = solve_upright_position_3d(delta_range(i), geom);
+        M = upright.R_upright * M_local + upright.t_upright;
+        [theta, Lp, ok] = solve_pou_rocker_angle(bc, M, Lp0, theta_guess);
+        if ~ok
+            jack_curve(i) = NaN;
+            camber_curve(i) = NaN;
+            pushrod_lengths(i) = NaN;
+            damper_lengths(i) = NaN;
+            continue;
+        end
+        theta_guess = theta;
+        pushrod_lengths(i) = Lp;
+        damper = rotate_about_axis(bc.damper_pin, bc.frame_pivot, ...
+            bc.rotation_axis, theta);
+        Ld = norm(damper - bc.damper_chassis_mount);
+        damper_lengths(i) = Ld;
+        jack_curve(i) = Ld0 - Ld;  % damper compression
+        spindle_now = upright.R_upright * spindle_nominal;
+        camber_curve(i) = asin(max(-1, min(1, spindle_now(3))));
+    end
+end
+
+function p = rotate_about_axis(p0, origin, axis, angle)
+    p = origin + axis_angle_rotation(axis, angle) * (p0 - origin);
 end

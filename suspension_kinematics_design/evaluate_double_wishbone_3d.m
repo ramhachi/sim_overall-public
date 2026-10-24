@@ -501,80 +501,11 @@ end
 
 function pose = solve_pose_for_wheel_center_z(geom, targetWheelZ, useTieRod, ...
         initialGuess, residualTolerance, tieRodLength)
-if nargin < 4
-    initialGuess = [];
-end
-if nargin < 5 || isempty(residualTolerance)
-    residualTolerance = 1e-6;
-end
-if nargin < 6
-    tieRodLength = [];
-end
-
-U0 = geom.U_U;
-L0 = geom.L_U;
-W0 = geom.W_C;
-L_kingpin = norm(U0 - L0);
-options = optimoptions('fsolve', 'Display', 'off', ...
-    'FunctionTolerance', 1e-12, 'StepTolerance', 1e-12);
-
-if useTieRod && isfield(geom, 'tie_rod_upright') && isfield(geom, 'tie_rod_chassis')
-    TR0 = geom.tie_rod_upright;
-    if isempty(tieRodLength)
-        tieLength = norm(geom.tie_rod_chassis - TR0);
-    else
-        tieLength = tieRodLength;
-    end
-    guess = normalize_initial_guess(initialGuess, 3);
-    [x, fval, exitflag, output] = fsolve(@(vars) travel_residual_3(vars, geom, ...
-        U0, L0, W0, TR0, L_kingpin, tieLength, targetWheelZ), guess, options);
-    theta_u = x(1);
-    theta_l = x(2);
-    phi = x(3);
-else
-    guess = normalize_initial_guess(initialGuess, 2);
-    [x, fval, exitflag, output] = fsolve(@(vars) travel_residual_2(vars, geom, ...
-        U0, L0, W0, L_kingpin, targetWheelZ), guess, options);
-    theta_u = x(1);
-    theta_l = x(2);
-    phi = 0.0;
-    TR0 = [];
-end
-
-[U_U, L_U, R_upright, t_upright] = build_upright_state(U0, L0, geom, theta_u, theta_l, phi);
-pose = struct();
-pose.U_U = U_U;
-pose.L_U = L_U;
-pose.R_upright = R_upright;
-pose.t_upright = t_upright;
-pose.W_C = R_upright * W0 + t_upright;
-pose.solver_vars = x(:);
-pose.fval = fval(:);
-pose.raw_residual_norm = norm(fval, inf);
-if numel(fval) == 3
-    residual_scale = [max(L_kingpin^2, 1e-6); 1.0; max(tieLength^2, 1e-6)];
-else
-    residual_scale = [max(L_kingpin^2, 1e-6); 1.0];
-end
-pose.residual_scale = residual_scale(:);
-pose.residual_norm = max(abs(fval(:) ./ pose.residual_scale));
-pose.iterations = output.iterations;
-pose.exitflag = exitflag;
-pose.converged = exitflag > 0 && all(isfinite(x)) && ...
-    pose.residual_norm <= residualTolerance;
-if ~isempty(TR0)
-    pose.TR_U = R_upright * TR0 + t_upright;
-else
-    pose.TR_U = [];
-end
-end
-
-function guess = normalize_initial_guess(initialGuess, n)
-if isempty(initialGuess) || numel(initialGuess) ~= n || ~all(isfinite(initialGuess(:)))
-    guess = zeros(n, 1);
-else
-    guess = initialGuess(:);
-end
+    if nargin < 4, initialGuess = []; end
+    if nargin < 5 || isempty(residualTolerance), residualTolerance = 1e-6; end
+    if nargin < 6, tieRodLength = []; end
+    pose = solve_wishbone_pose_3d(geom, targetWheelZ, [], initialGuess, ...
+        residualTolerance, tieRodLength, useTieRod);
 end
 
 function status = sample_status(flags, residuals, iterations, exitflags)
@@ -653,44 +584,6 @@ if isfield(geom, 'tie_rod_upright')
 else
     pose.TR_U = [];
 end
-end
-
-function res = travel_residual_2(vars, geom, U0, L0, W0, L_kingpin, targetWheelZ)
-theta_u = vars(1);
-theta_l = vars(2);
-[U_U, L_U, R_upright, t_upright] = build_upright_state(U0, L0, geom, theta_u, theta_l, 0.0);
-W_C = R_upright * W0 + t_upright;
-res = [
-    dot(U_U - L_U, U_U - L_U) - L_kingpin^2;
-    W_C(3) - targetWheelZ
-];
-end
-
-function res = travel_residual_3(vars, geom, U0, L0, W0, TR0, L_kingpin, tieLength, targetWheelZ)
-theta_u = vars(1);
-theta_l = vars(2);
-phi = vars(3);
-[U_U, L_U, R_upright, t_upright] = build_upright_state(U0, L0, geom, theta_u, theta_l, phi);
-W_C = R_upright * W0 + t_upright;
-TR_U = R_upright * TR0 + t_upright;
-res = [
-    dot(U_U - L_U, U_U - L_U) - L_kingpin^2;
-    W_C(3) - targetWheelZ;
-    dot(geom.tie_rod_chassis - TR_U, geom.tie_rod_chassis - TR_U) - tieLength^2
-];
-end
-
-function [U_U, L_U, R_upright, t_upright] = build_upright_state(U0, L0, geom, theta_u, theta_l, phi)
-U_U = rotate_point_around_axis_local(U0, geom.upper_arm_axis, geom.upper_arm_axis_origin, theta_u);
-L_U = rotate_point_around_axis_local(L0, geom.lower_arm_axis, geom.lower_arm_axis_origin, theta_l);
-kp_ref = geom.kingpin_axis.direction;
-kp_new = (U_U - L_U) / max(norm(U_U - L_U), 1e-9);
-R_align = rotation_between_vectors_local(kp_ref, kp_new);
-R_spin = axis_angle_rotation_local(kp_new, phi);
-R_upright = R_spin * R_align;
-mid_ref = (U0 + L0) / 2;
-mid_cur = (U_U + L_U) / 2;
-t_upright = mid_cur - R_upright * mid_ref;
 end
 
 function staticMetrics = compute_static_metrics(geom, pose, staticToe)
@@ -1076,40 +969,6 @@ if numel(x) < 2
 end
 p = polyfit(x, y, 1);
 coeff = p(1);
-end
-
-function pRot = rotate_point_around_axis_local(p, axis, axisOrigin, angle)
-v = p - axisOrigin;
-R = axis_angle_rotation_local(axis, angle);
-pRot = axisOrigin + R * v;
-end
-
-function R = rotation_between_vectors_local(a, b)
-a = a / max(norm(a), 1e-9);
-b = b / max(norm(b), 1e-9);
-v = cross(a, b);
-s = norm(v);
-c = dot(a, b);
-if s < 1e-12
-    if c > 0
-        R = eye(3);
-    else
-        perp = get_perpendicular_local(a);
-        R = axis_angle_rotation_local(perp, pi);
-    end
-else
-    vx = [0, -v(3), v(2); v(3), 0, -v(1); -v(2), v(1), 0];
-    R = eye(3) + vx + vx * vx * (1 - c) / (s * s);
-end
-end
-
-function perp = get_perpendicular_local(v)
-if abs(v(1)) < 0.9
-    perp = cross(v, [1; 0; 0]);
-else
-    perp = cross(v, [0; 1; 0]);
-end
-perp = perp / max(norm(perp), 1e-9);
 end
 
 function R = axis_angle_rotation_local(axis, angle)

@@ -202,7 +202,7 @@ end
 fprintf('\nTest 7: Forward Kinematics Calculation\n');
 try
     geom = define_suspension_geometry(0);
-    design_vars = [0.06; -0.015; -0.015; 0.60; -0.35; -0.10];
+    design_vars = [geom.M_pivot_initial(:); geom.bellcrank_initial(:)];
     delta_range = linspace(deg2rad(-20), deg2rad(20), 41)';
 
     [jack_curve, camber_curve, pushrod_lengths] = ...
@@ -235,7 +235,7 @@ end
 fprintf('\nTest 8: Polynomial Fit Objective Function\n');
 try
     geom = define_suspension_geometry(0);
-    design_vars = [0.06; -0.015; -0.015; 0.60; -0.35; -0.10];
+    design_vars = [geom.M_pivot_initial(:); geom.bellcrank_initial(:)];
     delta_range = linspace(deg2rad(-20), deg2rad(20), 41)';
 
     target_poly.jack_c1 = 0.0922;
@@ -370,6 +370,32 @@ try
     fprintf('  PASS: Physical sanity at 30deg\n');
     fprintf('    Jack-up: %.2f mm\n', jack * 1000);
     fprintf('    Camber change: %.2f deg\n', rad2deg(camber));
+    n_pass = n_pass + 1;
+catch ME
+    fprintf('  FAIL: %s\n', ME.message);
+    n_fail = n_fail + 1;
+end
+
+%% Test 13: Closed-chain travel x steer LUT (#44)
+fprintf('\nTest 13: Closed-chain MR/jack LUT\n');
+try
+    geom = define_suspension_geometry(0);
+    design_vars = [geom.M_pivot_initial(:); geom.bellcrank_initial(:)];
+    lut = solve_pou_closed_chain(geom, design_vars, struct( ...
+        'travel_m', linspace(-0.002, 0.002, 5)', ...
+        'rack_m', linspace(-0.002, 0.002, 3)', ...
+        'residual_tolerance', 1e-4));
+    assert(all(lut.converged(:)), 'Closed-chain LUT has non-converged points');
+    assert(all(isfinite(lut.mr(:))), 'MR LUT contains NaN/Inf');
+    assert(all(isfinite(lut.jack_m(:))), 'Jack LUT contains NaN/Inf');
+    assert(all(lut.mr(:) >= 0), 'Motion ratio magnitude must be non-negative');
+    assert(max(abs(diff(lut.jack_m, 1, 1)), [], 'all') < 0.01, ...
+        'Jack LUT jumps more than 10 mm between adjacent travel points');
+
+    fprintf('  PASS: Closed-chain LUT computed\n');
+    fprintf('    Travel points: %d, rack points: %d\n', size(lut.mr, 1), size(lut.mr, 2));
+    fprintf('    MR range: [%.3f, %.3f]\n', min(lut.mr(:)), max(lut.mr(:)));
+    fprintf('    Jack range: [%.2f, %.2f] mm\n', min(lut.jack_m(:))*1000, max(lut.jack_m(:))*1000);
     n_pass = n_pass + 1;
 catch ME
     fprintf('  FAIL: %s\n', ME.message);

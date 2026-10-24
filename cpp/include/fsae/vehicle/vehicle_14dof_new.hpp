@@ -379,10 +379,37 @@ public:
     /// @param steer_angle 各輪のステアリング角 [rad]
     /// @return POU変位 [m] (正: スプリング圧縮方向)
     double compute_pou_displacement(int wheel_index, double steer_angle) const {
-        // ジャッキアップ: Δz = c1·δ + c2·δ²
-        double c1 = params_.suspension.pou_jack_c1[wheel_index];
-        double c2 = params_.suspension.pou_jack_c2[wheel_index];
-        return c1 * steer_angle + c2 * steer_angle * steer_angle;
+        return compute_pou_displacement(wheel_index, 0.0, steer_angle);
+    }
+
+    /// Closed-chain jack (damper compression) from the POU LUT (#44).
+    double compute_pou_displacement(int wheel_index, double travel, double steer_angle) const {
+        const auto& lut = params_.suspension.pou_lut[wheel_index];
+        const double c1 = params_.suspension.pou_jack_c1[wheel_index];
+        const double c2 = params_.suspension.pou_jack_c2[wheel_index];
+        const double poly = c1 * steer_angle + c2 * steer_angle * steer_angle;
+        if (lut.valid() && lut.jack_m.size() == lut.travel_m.size()) {
+            const double v = interp2_clamped(lut.steer_rad, lut.travel_m, lut.jack_m,
+                                             steer_angle, travel, poly);
+            if (std::isfinite(v)) return v;
+        }
+        return poly;
+    }
+
+    /// POU motion ratio d(damper)/d(wheel travel) from the LUT (#44).
+    double pou_mr_at(int wheel_index, double travel, double steer_angle) const {
+        const auto& lut = params_.suspension.pou_lut[wheel_index];
+        if (lut.valid() && lut.mr.size() == lut.travel_m.size()) {
+            const double v = interp2_clamped(lut.steer_rad, lut.travel_m, lut.mr,
+                                             steer_angle, travel, motion_ratio_at(wheel_index, travel));
+            if (std::isfinite(v)) return v;
+        }
+        return motion_ratio_at(wheel_index, travel);
+    }
+
+    double pou_damper_mr_at(int wheel_index, double travel, double steer_angle) const {
+        return params_.suspension.mr_applies_to_dampers
+            ? pou_mr_at(wheel_index, travel, steer_angle) : 1.0;
     }
 
     double eval_quadratic(const std::array<double, 3>& coeffs, double x) const {
@@ -449,7 +476,8 @@ public:
 
         // 2. POU: ステアリング誘発キャンバー (Δγ = c1·δ + c2·δ²)
         // ジオメトリ由来の camber_vs_steer がある場合は二重計上を避けるためPOU側を適用しない
-        if (!kc_owns_steer_camber) {
+        const bool has_pou_lut = params_.suspension.pou_lut[wheel_index].valid();
+        if (!kc_owns_steer_camber && !has_pou_lut) {
             double c1 = params_.suspension.pou_camber_c1[wheel_index];
             double c2 = params_.suspension.pou_camber_c2[wheel_index];
             camber += c1 * steer_angle + c2 * steer_angle * steer_angle;
@@ -1420,7 +1448,7 @@ private:
             susp_travel_from_eq_arr[i] = susp_travel_from_eq;
 
             // POU: ステアリングによる強制変位をスプリングストロークに加算
-            double pou_disp = compute_pou_displacement(i, steer[i]);
+            double pou_disp = compute_pou_displacement(i, susp_travel_from_eq, steer[i]);
             double effective_susp_travel_from_eq = susp_travel_from_eq + pou_disp;
 
             // POU変位を保存（デバッグ用）
@@ -1430,15 +1458,18 @@ private:
 
             // スプリング力（pou_dispを反映）: F_wheel = MR(x)*(F_static/MR(0) + k*∫MR) (#10)
             const double x_eff = effective_susp_travel_from_eq;
-            const double mr = motion_ratio_at(i, x_eff);
-            F_spring[i] = mr * (static_Fz_[i] / motion_ratio_at(i, 0.0)
+            const double mr = pou_mr_at(i, x_eff, steer[i]);
+            const double mr_static = pou_mr_at(i, 0.0, steer[i]);
+            const double mr_static_safe = std::abs(mr_static) > 1e-9
+                ? mr_static : motion_ratio_at(i, 0.0);
+            F_spring[i] = mr * (static_Fz_[i] / mr_static_safe
                                 + params_.suspension.k_spring[i] * spring_stroke(i, x_eff));
             if (update_cache) {
                 spring_forces_[i] = F_spring[i];
             }
 
             // 素子座標で評価し MR 倍でホイールへ: F_wheel = MR*F_elem(MR*x, MR*v) (#10)
-            const double mr_d = damper_motion_ratio(i, x_eff);
+            const double mr_d = pou_damper_mr_at(i, x_eff, steer[i]);
 
             // Bouc-Wenダンパー力（変位にPOU反映、速度はquasi-static近似で変更なし）
             auto bw_out = compute_bouc_wen(bw_params_[i], mr_d * x_eff, mr_d * susp_velocity, state.damper_z[i]);

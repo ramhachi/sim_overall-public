@@ -16,12 +16,12 @@ function cost = objective_polynomial_fit(design_vars, geom, target_poly, delta_r
 %   cost = w_jack * rms(jack_error) + w_camber * rms(camber_error)
 %   where error is in [mm] for jack, [deg] for camber
 
-    % Weight factors 
-    % Structure Note: In a Double Wishbone suspension, POU (M-pivot & bellcrank)
-    % ONLY affects Pushrod Jack-up. Camber is fundamentally 100% defined by the Kingpin Axis 
-    % (A-arms). Therefore, the POU optimizer mathematically cannot change the Camber curve.
-    w_jack = 1.0;    % Jack-up error weight [mm]
-    w_camber = 0.0;  % Camber error MUST BE 0.0 here (A-arms are fixed!)
+    % The POU pushrod/rocker changes jack and motion ratio, not camber: camber
+    % is owned by the A-arm/K&C stage. The optimizer therefore does not weight
+    % a camber target; the closed-chain camber LUT is exported as a diagnostic
+    % and the runtime uses the K&C camber path (#44, #17).
+    w_jack = 1.0;    % Jack/damper error weight [mm]
+    w_camber = 0.0;  % Camber is not a POU design variable
 
     % Compute geometric curves from hardpoint coordinates
     [jack_curve, camber_curve, ~] = forward_kinematics(design_vars, geom, delta_range);

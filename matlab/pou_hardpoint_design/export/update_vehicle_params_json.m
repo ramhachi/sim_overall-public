@@ -41,6 +41,13 @@ function update_vehicle_params_json(results, geom, params_json_path)
     hp.bellcrank_pivot = round(results.bellcrank_pivot(:)', 6);
     hp.pushrod_length_m = round(results.pushrod_length_nominal_m, 4);
     hp.installation_ratio = round(results.installation_ratio, 4);
+    if isfield(results, 'bellcrank')
+        bc = results.bellcrank;
+        hp.bellcrank_frame_pivot = round(bc.frame_pivot(:)', 6);
+        hp.bellcrank_rotation_axis = round(bc.rotation_axis(:)', 6);
+        hp.bellcrank_damper_pin = round(bc.damper_pin(:)', 6);
+        hp.damper_chassis_mount = round(bc.damper_chassis_mount(:)', 6);
+    end
     hp.upper_arm_front_chassis = round(geom.upper_arm_front_chassis(:)', 6);
     hp.upper_arm_rear_chassis = round(geom.upper_arm_rear_chassis(:)', 6);
     hp.upper_arm_upright = round(geom.upper_arm_upright(:)', 6);
@@ -53,6 +60,12 @@ function update_vehicle_params_json(results, geom, params_json_path)
     hp.kingpin_direction = round(geom.kingpin_axis.direction(:)', 6);
 
     target.pou_hardpoints.(wn) = hp;
+    if isfield(results, 'pou_lut')
+        if ~isfield(target.suspension, 'pou_lut')
+            target.suspension.pou_lut = struct();
+        end
+        target.suspension.pou_lut.(wn) = results.pou_lut;
+    end
 
     if isfield(data, 'event_params') && isstruct(data.event_params)
         event_names = fieldnames(data.event_params);
@@ -69,6 +82,7 @@ function update_vehicle_params_json(results, geom, params_json_path)
 
     stage_result = struct( ...
         'installation_ratio', results.installation_ratio, ...
+        'pou_lut_converged', isfield(results, 'pou_lut') && results.pou_lut.converged, ...
         'polynomial_error_mm', results.polynomial_error_mm, ...
         'max_jack_error_mm', results.max_jack_error_mm, ...
         'max_camber_error_deg', results.max_camber_error_deg, ...

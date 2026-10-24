@@ -177,11 +177,12 @@ function visualize_3d_suspension(all_results, vehicle_json_path)
                   [geom.lower_arm_upright(3) M(3)], ...
                   '-', 'Color', upright_color, 'LineWidth', 2);
                   
-            % --- Physical Bellcrank Mapping ---
-            % Obtain the true physical rocker geometry (Pivot, Pushrod Pin, Damper Pin)
-            pushrod_vec_nominal = B - M; 
-            phys = generate_physical_bellcrank(B, pushrod_vec_nominal, geom);
-            
+            % --- Physical Bellcrank Mapping (closed-chain hardpoints, #44) ---
+            if isfield(res, 'bellcrank')
+                phys = res.bellcrank;
+            else
+                phys = derive_bellcrank_geometry(B, B - M, geom);
+            end
             P_pin = phys.pushrod_pin;
             F_piv = phys.frame_pivot;
             D_pin = phys.damper_pin;

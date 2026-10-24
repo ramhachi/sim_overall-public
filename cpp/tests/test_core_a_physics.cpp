@@ -365,6 +365,24 @@ TEST(CoreA_Tire, CamberedVerticalLoadProjectsToBodyPlane) {
     EXPECT_GT(std::abs(fy_tilted - fy_flat), 10.0);
 }
 
+// #44: closed-chain POU LUT drives jack and motion ratio.
+TEST(CoreA_POU, ClosedChainLutIsParsedAndUsed) {
+    const auto p = VehicleParams::from_json_string(R"({
+        "suspension": {"pou_lut": {"FL": {
+            "travel_m": [-0.01, 0.0, 0.01],
+            "steer_rad": [-0.1, 0.1],
+            "mr": [[0.4, 0.4], [0.6, 0.6], [0.8, 0.8]],
+            "jack_m": [[-0.001, -0.001], [0.0, 0.0], [0.001, 0.001]]
+        }}}
+    })");
+    ASSERT_TRUE(p.suspension.pou_lut[0].valid());
+    Vehicle14DOF_New veh(p);
+    EXPECT_NEAR(veh.pou_mr_at(0, 0.0, 0.0), 0.6, 1e-12);
+    EXPECT_NEAR(veh.pou_mr_at(0, 0.005, 0.0), 0.7, 1e-12);
+    EXPECT_NEAR(veh.compute_pou_displacement(0, 0.005, 0.0), 0.0005, 1e-12);
+    EXPECT_NEAR(veh.compute_pou_displacement(0, 0.0, 0.0), 0.0, 1e-12);
+}
+
 // #2: strict artifact validation lists missing production groups.
 TEST(CoreA_Params, StrictArtifactValidation) {
     const char* complete = R"({

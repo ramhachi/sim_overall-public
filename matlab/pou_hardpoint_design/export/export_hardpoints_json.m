@@ -34,6 +34,16 @@ function json_path = export_hardpoints_json(results, geom, output_path)
     wheel_data.bellcrank_pivot = round(results.bellcrank_pivot(:)', 6);
     wheel_data.pushrod_length_m = round(results.pushrod_length_nominal_m, 4);
     wheel_data.installation_ratio = round(results.installation_ratio, 4);
+    if isfield(results, 'bellcrank')
+        bc = results.bellcrank;
+        wheel_data.bellcrank_frame_pivot = round(bc.frame_pivot(:)', 6);
+        wheel_data.bellcrank_rotation_axis = round(bc.rotation_axis(:)', 6);
+        wheel_data.bellcrank_damper_pin = round(bc.damper_pin(:)', 6);
+        wheel_data.damper_chassis_mount = round(bc.damper_chassis_mount(:)', 6);
+    end
+    if isfield(results, 'pou_lut')
+        wheel_data.pou_lut = results.pou_lut;
+    end
     wheel_data.max_rod_angle_deg = round(results.max_rod_angle_deg, 2);
     wheel_data.polynomial_error_mm = round(results.polynomial_error_mm, 3);
     wheel_data.packaging_valid = results.packaging_valid;

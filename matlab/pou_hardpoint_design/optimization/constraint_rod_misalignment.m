@@ -55,23 +55,19 @@ function [c, ceq] = constraint_rod_misalignment(design_vars, geom, delta_range)
     c(2) = geom.pushrod_length_min - min(pushrod_lengths);
     c(3) = max(pushrod_lengths) - geom.pushrod_length_max;
 
-    % 3. Installation ratio (at zero steer)
-    % Use derived kingpin axis from solver
-    kp_origin = geom.kingpin_axis.origin;
-    kp_dir = geom.kingpin_axis.direction;
-    OM = M_pivot_nominal - kp_origin;
-    proj = dot(OM, kp_dir) * kp_dir;
-    perp_dist = norm(OM - proj);
-
-    idx_zero = find(abs(delta_range) < 1e-6, 1);
-    if ~isempty(idx_zero)
-        IR = perp_dist / pushrod_lengths(idx_zero);
+    % 3. Installation ratio = d(damper length)/d(wheel travel), not a
+    % pushrod-length proxy (#44). Evaluate a small travel grid at zero rack.
+    mr_lut = solve_pou_closed_chain(geom, design_vars, struct( ...
+        'travel_m', [-0.001; 0.0; 0.001], 'rack_m', 0.0, ...
+        'residual_tolerance', 1e-4));
+    valid_mr = mr_lut.mr(isfinite(mr_lut.mr));
+    if isempty(valid_mr)
+        IR = 0.0;
     else
-        % Use nominal pushrod length
-        IR = perp_dist / norm(pushrod_vec_nominal);
+        IR = max(abs(valid_mr));
     end
 
-    c(4) = 0.03 - IR;    
+    c(4) = 0.03 - IR;
     c(5) = IR - 1.50;    % relaxed from 0.80 to allow convergence for aggressive targets
 
     % 4. Maximum distance from Wheel Center to upright pushrod node (M-pivot)

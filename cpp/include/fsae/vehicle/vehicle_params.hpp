@@ -25,6 +25,29 @@ inline double interp1_clamped(const std::vector<double>& x, const std::vector<do
     return y[k - 1] + t * (y[k] - y[k - 1]);
 }
 
+/// Bilinear lookup with clamped knots. Rows of values correspond to y, cols to x.
+inline double interp2_clamped(const std::vector<double>& x, const std::vector<double>& y,
+                              const std::vector<std::vector<double>>& values,
+                              double qx, double qy, double fallback) {
+    if (x.size() < 2 || y.size() < 2 || values.size() != y.size()) return fallback;
+    auto bracket = [](const std::vector<double>& knots, double q, size_t& i) {
+        if (q <= knots.front()) { i = 0; return 0.0; }
+        if (q >= knots.back()) { i = knots.size() - 2; return 1.0; }
+        i = static_cast<size_t>(std::upper_bound(knots.begin(), knots.end(), q) - knots.begin()) - 1;
+        return (q - knots[i]) / (knots[i + 1] - knots[i]);
+    };
+    size_t ix = 0, iy = 0;
+    const double tx = bracket(x, qx, ix);
+    const double ty = bracket(y, qy, iy);
+    if (values[iy].size() != x.size() || values[iy + 1].size() != x.size()) return fallback;
+    const double v00 = values[iy][ix];
+    const double v10 = values[iy][ix + 1];
+    const double v01 = values[iy + 1][ix];
+    const double v11 = values[iy + 1][ix + 1];
+    return (1.0 - ty) * ((1.0 - tx) * v00 + tx * v10)
+         + ty * ((1.0 - tx) * v01 + tx * v11);
+}
+
 /// 車輪インデックス
 enum WheelIndex : int {
     FL = 0,  // Front Left
@@ -136,6 +159,18 @@ struct SuspensionParams {
     // per-wheel係数（ミラー対称の場合、FL=-FR: 例 [-0.05, 0.05, 0, 0]）
     std::array<double, 4> pou_camber_c1 = {0, 0, 0, 0};  // [rad/rad]
     std::array<double, 4> pou_camber_c2 = {0, 0, 0, 0};  // [rad/rad²]
+
+    /// Closed-chain POU LUT (#44). Rows = travel, cols = steer; empty = legacy
+    /// polynomial coefficients above.
+    struct POULut {
+        std::vector<double> travel_m, steer_rad;
+        std::vector<std::vector<double>> mr, jack_m, camber_rad, damper_length_m, arb_mr;
+        bool valid() const {
+            return travel_m.size() >= 2 && steer_rad.size() >= 2
+                && mr.size() == travel_m.size() && jack_m.size() == travel_m.size();
+        }
+    };
+    std::array<POULut, 4> pou_lut;
 
     // POU物理ハードポイント座標（参照/デバッグ用、シミュレーション計算には使用しない）
     // MATLAB最適化からのエクスポートデータ。全ゼロ=未設定
@@ -592,6 +627,36 @@ struct VehicleParams {
             }
             if (s.contains("pou_camber_c2") && s["pou_camber_c2"].is_array()) {
                 for(int i=0; i<4; ++i) p.suspension.pou_camber_c2[i] = s["pou_camber_c2"][i];
+            }
+            if (s.contains("pou_lut") && s["pou_lut"].is_object()) {
+                auto parse_vec = [](const nlohmann::json& node, std::vector<double>& dst) {
+                    dst.clear();
+                    if (!node.is_array()) return;
+                    for (const auto& v : node) dst.push_back(v.get<double>());
+                };
+                auto parse_mat = [](const nlohmann::json& node,
+                                    std::vector<std::vector<double>>& dst) {
+                    dst.clear();
+                    if (!node.is_array()) return;
+                    for (const auto& row : node) {
+                        std::vector<double> r;
+                        if (row.is_array()) for (const auto& v : row) r.push_back(v.get<double>());
+                        dst.push_back(std::move(r));
+                    }
+                };
+                const std::array<std::string, 4> keys = {"FL", "FR", "RL", "RR"};
+                for (int i = 0; i < 4; ++i) {
+                    if (!s["pou_lut"].contains(keys[i])) continue;
+                    const auto& src = s["pou_lut"][keys[i]];
+                    auto& dst = p.suspension.pou_lut[i];
+                    if (src.contains("travel_m")) parse_vec(src["travel_m"], dst.travel_m);
+                    if (src.contains("steer_rad")) parse_vec(src["steer_rad"], dst.steer_rad);
+                    if (src.contains("mr")) parse_mat(src["mr"], dst.mr);
+                    if (src.contains("jack_m")) parse_mat(src["jack_m"], dst.jack_m);
+                    if (src.contains("camber_rad")) parse_mat(src["camber_rad"], dst.camber_rad);
+                    if (src.contains("damper_length_m")) parse_mat(src["damper_length_m"], dst.damper_length_m);
+                    if (src.contains("arb_mr")) parse_mat(src["arb_mr"], dst.arb_mr);
+                }
             }
 
             // フレーム柔軟性（Phase A1）
