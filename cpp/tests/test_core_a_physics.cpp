@@ -163,3 +163,30 @@ TEST(CoreA_Anti, TotalLateralTransferIndependentOfRollCentre) {
     EXPECT_NEAR(m1, m0, 0.03 * std::abs(m0));
     EXPECT_LT(std::abs(roll1), 0.85 * std::abs(roll0));  // less body roll
 }
+
+namespace {
+double yaw_rate_with_compliance(double k_steer, double kc_toe_per_mz) {
+    VehicleParams p = VehicleParams::default_fsae();
+    p.steering.stiffness = k_steer;
+    for (int i = 0; i < 2; ++i) {
+        p.suspension.kc_corners[i].valid = true;
+        p.suspension.kc_corners[i].compliance.toe_per_load[5] = kc_toe_per_mz;
+    }
+    Vehicle14DOF_New veh(p);
+    veh.set_initial_velocity(12.0);
+    DriverInput in;
+    in.steering = 0.05;
+    in.gear = 3;
+    for (int k = 0; k < 2000; ++k) veh.step(0.001, in);
+    return veh.state().r;
+}
+}  // namespace
+
+// #6: K&C Mz->toe and K_steer must not both act on the same Mz.
+TEST(CoreA_ComplianceSteer, BothPathsEqualSinglePath) {
+    const double both = yaw_rate_with_compliance(1500.0, 1.0 / 1500.0);
+    const double kc_only = yaw_rate_with_compliance(1e12, 1.0 / 1500.0);
+    EXPECT_NEAR(both, kc_only, 1e-9);
+    const double ksteer_only = yaw_rate_with_compliance(1500.0, 0.0);
+    EXPECT_NEAR(ksteer_only, kc_only, 0.02 * std::abs(kc_only));
+}

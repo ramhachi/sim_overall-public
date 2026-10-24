@@ -962,8 +962,11 @@ private:
         // 1. アッカーマン幾何による舵角
         auto steer_ackermann = compute_ackermann_steering(delta_driver, params_.steering.ackermann);
 
-        // 2. コンプライアンスステアによる補正
+        // 2. コンプライアンスステアによる補正（K&C が Mz→toe を持つ輪は二重計上を避けて無効, #6）
         auto steer_compliance = compute_compliance_steer(Mz_wheels[FL], Mz_wheels[FR]);
+        for (int i = 0; i < 4; ++i) {
+            if (!uses_steering_stiffness_compliance(i)) steer_compliance[i] = 0.0;
+        }
 
         // 3. 合計（ドライバー入力 + コンプライアンス）
         std::array<double, 4> steer_total;
@@ -972,6 +975,13 @@ private:
         }
 
         return steer_total;
+    }
+
+    /// K_steer path is deprecated in favour of the K&C 6xn compliance matrix; it is
+    /// only used where K&C does not already map Mz to toe (#6).
+    bool uses_steering_stiffness_compliance(int i) const {
+        const auto& kc = params_.suspension.kc_corners[i];
+        return i < 2 && !(kc.valid && kc.compliance.toe_per_load[5] != 0.0);
     }
 
     // ======== キャンバー角・トー角計算（ガイド §2.4） ========
@@ -1171,9 +1181,9 @@ private:
             delta_driver = input.steering;
         }
 
-        // 前ステップのセルフアライニングトルクを使用（簡易版）
-        // 注: 厳密には反復計算が必要だが、1msタイムステップでは前ステップ値で十分
-        const std::array<double, 4> steer = compute_total_steering(delta_driver, tire_Mz_);
+        // 前ステップの Mz を初期値にし、K&C fixed-point ループ内で当該 stage の Mz で更新（#6: 1 step lag 解消）
+        const auto steer_ack = compute_ackermann_steering(delta_driver, params_.steering.ackermann);
+        std::array<double, 4> steer = compute_total_steering(delta_driver, tire_Mz_);
         
         // ======== フレームねじりによるロール角分離（Phase A1）========
         // 剛体モード: K_chassis >= 1e5 Nm/deg では ω_n >> RK4安定限界のため
@@ -1280,8 +1290,12 @@ private:
             double camber = params_.suspension.static_camber[i];
             double toe = params_.suspension.static_toe[i];
 
-            const int kc_iterations = wheel_uses_load_sensitive_kinematics(i) ? 2 : 1;
+            const bool ksteer = uses_steering_stiffness_compliance(i);
+            const int kc_iterations = (wheel_uses_load_sensitive_kinematics(i) || ksteer) ? 2 : 1;
             for (int kc_iter = 0; kc_iter < kc_iterations; ++kc_iter) {
+                if (kc_iter > 0 && ksteer) {
+                    steer[i] = steer_ack[i] + tire_Mz_stage[i] / params_.steering.stiffness;
+                }
                 // Kinematics follow the wheel-to-body stroke (state), not the
                 // POU pushrod-length change (#38); springs keep effective_*.
                 camber = compute_camber_angle(i, susp_travel_from_eq, steer[i], axle_roll_angle, kc_loads);
