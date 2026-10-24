@@ -55,6 +55,11 @@ try
     assert(isfield(catalog(1), 'Iy_mm4'), 'Missing Iy_mm4 field');
     assert(isfield(catalog(1), 'size_class'), 'Missing size_class field');
 
+    % Catalog is sorted by (material, shape, D, t) so +/-1 mutations are local (#53).
+    keys = arrayfun(@(p) sprintf('%s|%s|%09.3f|%09.3f', p.material_id, p.shape, ...
+        p.D_outer_mm, p.t_mm), catalog, 'UniformOutput', false);
+    assert(issorted(keys), 'Catalog must be sorted by material/shape/D/t');
+
     fprintf('  ✓ PASSED: Loaded %d pipes\n', length(catalog));
     passed_tests = passed_tests + 1;
 catch ME

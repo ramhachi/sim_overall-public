@@ -137,6 +137,37 @@ catch ME
     fprintf('  ✗ FAILED: %s\n', ME.message);
 end
 
+%% Test 3b: tube OD inflation and capped cylinder (#53)
+fprintf('\nTest 3b: exclusion-zone OD inflation / cylinder caps...\n');
+total_tests = total_tests + 1;
+
+try
+    % A segment 150 mm off the box centre passes with r=0 but touches after
+    % inflating by the 100 mm tube radius.
+    nodes = [0, 150, 0; 1000, 150, 0];
+    elements = [1, 2];
+    config.exclusion_zones = struct('type', 'AABB', ...
+        'min_bounds', [400, -100, -100], 'max_bounds', [600, 100, 100]);
+    p0 = checkExclusionZones(nodes, elements, config, [], {}, 0);
+    p1 = checkExclusionZones(nodes, elements, config, [], {}, 100);
+    assert(p0(1) == 0, '0-radius centreline must miss the box');
+    assert(p1(1) > 0, 'tube radius must inflate the AABB');
+
+    % Vertical segment through a capped cylinder: only the capped 100 mm counts.
+    nodes = [0, 0, -100; 0, 0, 200];
+    elements = [1, 2];
+    config.exclusion_zones = struct('type', 'Cylinder', 'center', [0, 0], ...
+        'radius', 50, 'z_min', 0, 'z_max', 100);
+    p_cyl = checkExclusionZones(nodes, elements, config, [], {}, 0);
+    assert(abs(p_cyl(1) - 100 * 1e6) < 1e-6, ...
+        'vertical segment must be clipped by the cylinder Z caps');
+
+    fprintf('  ✓ PASSED\n');
+    passed_tests = passed_tests + 1;
+catch ME
+    fprintf('  ✗ FAILED: %s\n', ME.message);
+end
+
 %% Test 4: exclusion-zone name exemptions and unsupported types
 fprintf('\nTest 4: checkExclusionZones name exemptions...\n');
 total_tests = total_tests + 1;

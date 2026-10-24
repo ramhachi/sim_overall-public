@@ -475,6 +475,9 @@ function [config, reg_params] = buildCanonicalConfig(runtime, opts, displayProgr
     end
     config.exclusion_zones = buildExclusionZoneCell(runtime.geom);
     config.exclusion_zones = appendCockpitExclusionZones(config.exclusion_zones, runtime.geom, runtime.suspension_file, displayProgress, config);
+    if isfield(config, 'diff_envelope')
+        config.exclusion_zones = appendDiffEnvelopeZone(config.exclusion_zones, config.diff_envelope);
+    end
 end
 
 function [lb, ub, intcon, custom_options] = buildCanonicalGaOptions(opts, catalog, config, displayProgress)
@@ -670,6 +673,18 @@ function zones = appendCockpitExclusionZones(zones, geom, suspension_file, displ
             cockpit_upper.max_bounds(2), cockpit_upper.min_bounds(3), cockpit_upper.max_bounds(3));
         fprintf('   Total exclusion zones: %d\n', length(zones));
     end
+end
+
+function zones = appendDiffEnvelopeZone(zones, envelope)
+    % The loaded differential envelope was previously only used for load-case
+    % geometry, so tubes could pass through it (#53).
+    if isempty(envelope) || ~isstruct(envelope) ...
+            || ~isfield(envelope, 'min_bounds') || ~isfield(envelope, 'max_bounds')
+        return;
+    end
+    zone = struct('type', 'AABB', 'min_bounds', envelope.min_bounds, ...
+        'max_bounds', envelope.max_bounds, 'name', 'diff_envelope');
+    zones{end + 1} = zone;
 end
 
 function zones = buildExclusionZoneCell(geom)

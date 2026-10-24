@@ -277,7 +277,7 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
     end
     
     % 3. Check Exclusion Zones (with group-based exemptions for mandatory infrastructure)
-    [excl_penalties, collision_names] = checkExclusionZones(nodes, elements_fem(:, 1:2), config, elements_geom.group_indices, elements_geom.group_names);
+    [excl_penalties, collision_names] = checkExclusionZones(nodes, elements_fem(:, 1:2), config, elements_geom.group_indices, elements_geom.group_names, elements_fem(:, 3) / 2000);
     total_excl_penalty = sum(excl_penalties);
 
     compliance_penalty = 0;

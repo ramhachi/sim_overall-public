@@ -102,5 +102,15 @@ function catalog = loadPipeCatalog(json_path, materials)
         end
     end
 
+    % Sort by (material, shape, D, t) so a +/-1 catalog mutation changes one
+    % attribute instead of jumping to an unrelated tube (#53).
+    if n_pipes > 1
+        sort_table = table( ...
+            {catalog.material_id}', {catalog.shape}', [catalog.D_outer_mm]', [catalog.t_mm]', ...
+            'VariableNames', {'material_id', 'shape', 'D_outer_mm', 't_mm'});
+        [~, order] = sortrows(sort_table);
+        catalog = catalog(order);
+    end
+
     fprintf('Loaded %d pipes from %s\n', n_pipes, json_path);
 end
