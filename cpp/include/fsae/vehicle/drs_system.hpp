@@ -13,6 +13,7 @@
 ///
 /// State machine: INACTIVE → ACTIVATING (0.1s delay) → ACTIVE → INACTIVE (immediate)
 
+#include <algorithm>
 #include <cmath>
 
 namespace fsae {
@@ -29,9 +30,8 @@ struct DRSConfig {
     double activation_delay = 0.1;            // [s] 起動遅延
     double deactivation_delay = 0.0;          // [s] 停止遅延（即座）
 
-    // 空力効果（係数比率）
-    double cl_ratio_active = 0.4;            // DRS ON時のCL倍率 (1.5/2.8)
-    double cd_ratio_active = 0.6;            // DRS ON時のCD倍率 (0.70/0.95)
+    // フラップ動作の 1 次遅れ時定数 [s]（0 = 二値）。空力効果そのものは AeroMapParams::drs_* / マップの drs_on。
+    double flap_tau = 0.0;
 };
 
 /// DRS制御システム
@@ -43,15 +43,35 @@ public:
     /// ドライバー入力と車両状態からDRS状態を更新
     /// @param drs_button ドライバーのDRSボタン入力 (true=起動要求)
     /// @param speed 車速 [m/s] = sqrt(vx²+vy²)
-    /// @param vx 縦速度 [m/s]（横加速度推定に使用）
-    /// @param yaw_rate ヨーレート [rad/s]（横加速度推定に使用）
+    /// @param ay_body 車体横加速度 [m/s²]（前回微分評価の値）
     /// @param steering_angle ステアリング角 [rad]
     /// @param dt タイムステップ [s]
     /// @return DRS起動中ならtrue
-    bool update(bool drs_button, double speed, double vx, double yaw_rate,
+    bool update(bool drs_button, double speed, double ay_body,
                 double steering_angle, double dt) {
         // 安全性チェック
-        bool safety_ok = can_activate(speed, vx, yaw_rate, steering_angle);
+        bool safety_ok = can_activate(speed, ay_body, steering_angle);
+        const bool result = update_state(drs_button, safety_ok, speed, dt);
+        // フラップ位置: τ=0 なら二値、τ>0 なら 1 次遅れ（陽解法、dt≥τ で目標へ到達）
+        const double target = result ? 1.0 : 0.0;
+        flap_ = config_.flap_tau > 0.0
+            ? flap_ + std::min(dt / config_.flap_tau, 1.0) * (target - flap_)
+            : target;
+        return result;
+    }
+
+    /// 旧 API: 横加速度を |vx·r| で近似（定常旋回以外では誤差）。update(button, speed, ay, steer, dt) を使うこと。
+    [[deprecated("pass body lateral acceleration: update(button, speed, ay_body, steer, dt)")]]
+    bool update(bool drs_button, double speed, double vx, double yaw_rate,
+                double steering_angle, double dt) {
+        return update(drs_button, speed, vx * yaw_rate, steering_angle, dt);
+    }
+
+    /// フラップ位置 [0-1]（AeroMap4D::compute_forces の drs_frac に渡す）
+    double flap_position() const { return flap_; }
+
+private:
+    bool update_state(bool drs_button, bool safety_ok, double speed, double dt) {
 
         // 状態遷移
         switch (state_) {
@@ -103,6 +123,7 @@ public:
         return is_active();
     }
 
+public:
     /// 現在の状態取得
     bool is_active() const {
         return state_ == State::ACTIVE;
@@ -129,6 +150,7 @@ public:
     void reset() {
         state_ = State::INACTIVE;
         timer_ = 0.0;
+        flap_ = 0.0;
         stats_ = Stats();
     }
 
@@ -143,19 +165,19 @@ private:
     DRSConfig config_;
     State state_;
     double timer_;
+    double flap_ = 0.0;
     Stats stats_;
 
     /// 安全性チェック（3層）
-    bool can_activate(double speed, double vx, double yaw_rate,
+    bool can_activate(double speed, double ay_body,
                       double steering_angle) const {
         // 1. 速度チェック
         if (speed < config_.min_speed_for_activation) {
             return false;
         }
 
-        // 2. 横加速度チェック（簡易推定: |vx * r|）
-        double lateral_accel = std::abs(vx * yaw_rate);
-        if (lateral_accel > config_.max_lateral_accel) {
+        // 2. 横加速度チェック（車体横加速度）
+        if (std::abs(ay_body) > config_.max_lateral_accel) {
             return false;
         }
 

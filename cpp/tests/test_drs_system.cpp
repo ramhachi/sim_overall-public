@@ -32,7 +32,7 @@ protected:
         double safe_vx = 25.0;
         double safe_yaw_rate = 0.0; // 横G=0
         double safe_steer = 0.0;    // 舵角=0
-        return drs->update(button, safe_speed, safe_vx, safe_yaw_rate, safe_steer, dt);
+        return drs->update(button, safe_speed, safe_vx * safe_yaw_rate, safe_steer, dt);
     }
 
     // 低速でアップデートするヘルパー
@@ -41,7 +41,7 @@ protected:
         double vx = 15.0;
         double yaw_rate = 0.0;
         double steer = 0.0;
-        return drs->update(button, low_speed, vx, yaw_rate, steer, dt);
+        return drs->update(button, low_speed, vx * yaw_rate, steer, dt);
     }
 };
 
@@ -99,7 +99,7 @@ TEST_F(DRSSystemTest, SpeedThresholdCheck) {
     double safe_speed = 25.0;
     double dt = 0.01;
     for (int i = 0; i < 15; ++i) {
-        drs->update(true, safe_speed, safe_speed, 0.0, 0.0, dt);
+        drs->update(true, safe_speed, 0.0, 0.0, dt);
     }
     EXPECT_TRUE(drs->is_active());
 }
@@ -114,7 +114,7 @@ TEST_F(DRSSystemTest, LateralAccelCheck) {
     double yaw_rate = high_lateral_g / vx;
 
     for (int i = 0; i < 20; ++i) {
-        bool result = drs->update(true, vx, vx, yaw_rate, 0.0, 0.01);
+        bool result = drs->update(true, vx, high_lateral_g, 0.0, 0.01);
         EXPECT_FALSE(result) << "DRS should not activate under high lateral G";
     }
 
@@ -122,7 +122,7 @@ TEST_F(DRSSystemTest, LateralAccelCheck) {
     drs->reset();
     double safe_yaw_rate = 0.1;  // 低い横G
     for (int i = 0; i < 15; ++i) {
-        drs->update(true, 25.0, 25.0, safe_yaw_rate, 0.0, 0.01);
+        drs->update(true, 25.0, 25.0 * safe_yaw_rate, 0.0, 0.01);
     }
     EXPECT_TRUE(drs->is_active());
 }
@@ -133,7 +133,7 @@ TEST_F(DRSSystemTest, SteeringAngleCheck) {
     double large_steer = config.max_steering_angle + 0.01;  // しきい値超過
 
     for (int i = 0; i < 20; ++i) {
-        bool result = drs->update(true, 25.0, 25.0, 0.0, large_steer, 0.01);
+        bool result = drs->update(true, 25.0, 0.0, large_steer, 0.01);
         EXPECT_FALSE(result) << "DRS should not activate with large steering angle";
     }
 
@@ -141,7 +141,7 @@ TEST_F(DRSSystemTest, SteeringAngleCheck) {
     drs->reset();
     double small_steer = config.max_steering_angle - 0.01;  // しきい値以下
     for (int i = 0; i < 15; ++i) {
-        drs->update(true, 25.0, 25.0, 0.0, small_steer, 0.01);
+        drs->update(true, 25.0, 0.0, small_steer, 0.01);
     }
     EXPECT_TRUE(drs->is_active());
 }
@@ -178,14 +178,14 @@ TEST_F(DRSSystemTest, Statistics) {
 
     // DRSをACTIVEにする（遅延: 0.1s = 10ステップ）
     for (int i = 0; i < 15; ++i) {
-        drs->update(true, speed, speed, 0.0, 0.0, dt);
+        drs->update(true, speed, 0.0, 0.0, dt);
     }
     ASSERT_TRUE(drs->is_active());
 
     // 0.5秒間ACTIVE状態を維持
     int active_steps = static_cast<int>(active_duration / dt);
     for (int i = 0; i < active_steps; ++i) {
-        drs->update(true, speed, speed, 0.0, 0.0, dt);
+        drs->update(true, speed, 0.0, 0.0, dt);
     }
 
     // 統計を確認
@@ -197,11 +197,11 @@ TEST_F(DRSSystemTest, Statistics) {
         << "Average speed should be close to " << speed << " m/s";
 
     // ボタン解除後、再起動で2回目のカウント
-    drs->update(false, speed, speed, 0.0, 0.0, dt);
+    drs->update(false, speed, 0.0, 0.0, dt);
     ASSERT_FALSE(drs->is_active());
 
     for (int i = 0; i < 15; ++i) {
-        drs->update(true, speed, speed, 0.0, 0.0, dt);
+        drs->update(true, speed, 0.0, 0.0, dt);
     }
     EXPECT_EQ(drs->get_stats().activation_count, 2) << "Should have activated twice";
 }
@@ -242,6 +242,65 @@ TEST_F(DRSIntegrationTest, AeroForceReduction) {
     // Fyは変化しない（サイドフォース）
     EXPECT_NEAR(forces_on.Fy, forces_off.Fy, 1e-6)
         << "Side force should not change with DRS";
+
+    // リアウイングのみの DRS: フロント DF は不変、CoP は前進（旧実装は CoP 固定）
+    EXPECT_NEAR(forces_on.Fz_front, forces_off.Fz_front, 1e-6);
+    EXPECT_GT(aero_map.compute(rh_front, rh_rear, roll, yaw, true).CoP_x,
+              aero_map.compute(rh_front, rh_rear, roll, yaw, false).CoP_x);
+}
+
+// ======== 8b. DRS 目標値（比率・CoP シフト）は AeroMapParams で明示 ========
+TEST(DRSAeroTargets, RatiosAndCopShiftFromParams) {
+    AeroMap4D<double> aero_map;
+    aero_map.params().drs_CL_ratio = 0.6;
+    aero_map.params().drs_CD_ratio = 0.8;
+    aero_map.params().drs_CoP_x_shift = 0.05;
+    const auto off = aero_map.compute(40, 55, 0, 0, false);
+    const auto on = aero_map.compute(40, 55, 0, 0, true);
+    EXPECT_NEAR(on.CL / off.CL, 0.6, 1e-12);
+    EXPECT_NEAR(on.CD / off.CD, 0.8, 1e-12);
+    EXPECT_NEAR(on.CoP_x - off.CoP_x, 0.05, 1e-12);
+}
+
+// ======== 8c. 安全判定は車体横加速度 ay（旧 |vx·r| は非推奨オーバーロードで委譲） ========
+TEST_F(DRSSystemTest, UsesBodyLateralAccel) {
+    // 定常でない旋回: |vx·r| は小さいが実 ay は大きい → 起動不可
+    for (int i = 0; i < 20; ++i) {
+        EXPECT_FALSE(drs->update(true, 25.0, config.max_lateral_accel + 0.5, 0.0, 0.01));
+    }
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+    drs->reset();
+    for (int i = 0; i < 20; ++i) {
+        EXPECT_FALSE(drs->update(true, 25.0, 25.0, (config.max_lateral_accel + 0.5) / 25.0, 0.0, 0.01))
+            << "deprecated overload delegates with ay = vx*r";
+    }
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+}
+
+// ======== 8d. フラップ 1 次遅れ（τ=0 は二値） ========
+TEST_F(DRSSystemTest, FlapFirstOrderBlend) {
+    for (int i = 0; i < 15; ++i) update_safe(true, 0.01);
+    ASSERT_TRUE(drs->is_active());
+    EXPECT_DOUBLE_EQ(drs->flap_position(), 1.0) << "tau = 0 -> binary flap";
+
+    DRSConfig slow = config;
+    slow.flap_tau = 0.1;
+    DRSSystem lag(slow);
+    for (int i = 0; i < 20 && !lag.is_active(); ++i) lag.update(true, 25.0, 0.0, 0.0, 0.01);  // 0.1 s delay
+    ASSERT_TRUE(lag.is_active());
+    const double first = lag.flap_position();
+    EXPECT_GT(first, 0.0);
+    EXPECT_LT(first, 0.5);
+    for (int i = 0; i < 100; ++i) lag.update(true, 25.0, 0.0, 0.0, 0.01);
+    EXPECT_NEAR(lag.flap_position(), 1.0, 1e-3);
+    lag.update(false, 25.0, 0.0, 0.0, 0.01);
+    EXPECT_FALSE(lag.is_active());
+    EXPECT_GT(lag.flap_position(), 0.5) << "flap closes with lag after deactivation";
 }
 
 // ======== 9. 速度閾値以下での非起動チェック（実シミュレーション） ========
