@@ -24,8 +24,19 @@ else
     axle_x = -params.mass.b;
     wheel_name = 'RL';
 end
-W_C = [axle_x; -track / 2; -R_tire];
-source = struct('wheel_center', 'mass_and_tire_radius', 'arm_x_offset', 'baseline');
+% Loaded radius from the static corner load and tire vertical stiffness (#40).
+if is_front
+    static_fz = 0.5 * params.mass.m_total * 9.81 * params.mass.b / params.mass.wheelbase;
+else
+    static_fz = 0.5 * params.mass.m_total * 9.81 * params.mass.a / params.mass.wheelbase;
+end
+tire_deflection = 0.0;
+if isfield(params.tire, 'k_tire') && params.tire.k_tire > 0
+    tire_deflection = static_fz / params.tire.k_tire;
+end
+R_loaded = R_tire - tire_deflection;
+W_C = [axle_x; -track / 2; -R_loaded];
+source = struct('wheel_center', 'mass_and_loaded_tire_radius', 'arm_x_offset', 'baseline');
 
 hp = [];
 if isfield(params, 'suspension') && isfield(params.suspension, 'kc') ...
@@ -73,6 +84,9 @@ end
 axle = struct();
 axle.W_C = W_C;
 axle.R_tire = R_tire;
+axle.R_loaded = R_loaded;
+axle.static_fz_n = static_fz;
+axle.tire_deflection_m = tire_deflection;
 axle.arm_x_offset = arm_x_offset;
 axle.source = source;
 end

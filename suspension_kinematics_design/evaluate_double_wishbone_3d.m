@@ -22,6 +22,8 @@ addParameter(p, 'BranchToeTolerance', 0.05, @(x) isnumeric(x) && isscalar(x) && 
 addParameter(p, 'BranchCamberTolerance', deg2rad(2.0), @(x) isnumeric(x) && isscalar(x) && x > 0);
 addParameter(p, 'BranchKingpinTolerance', deg2rad(2.0), @(x) isnumeric(x) && isscalar(x) && x > 0);
 addParameter(p, 'ComplianceModel', struct(), @isstruct);
+% Z-down wheel-centre offsets for the 2D rack x travel steer map (#43); [] skips it.
+addParameter(p, 'SteerMapTravelSamples', [], @isnumeric);
 parse(p, varargin{:});
 opts = p.Results;
 eval_start = tic;
@@ -44,6 +46,8 @@ travelResiduals = zeros(size(travelSamples));
 travelIterations = zeros(size(travelSamples));
 travelExitflags = zeros(size(travelSamples));
 travelGuess = [];
+travelWheelCenter = zeros(3, numel(travelSamples));
+travelContactPatch = zeros(3, numel(travelSamples));
 travelSampleValues = repmat(struct('z_offset_m', 0, 'camber_rad', 0, 'toe_rad', 0, ...
     'residual_norm', 0, 'iterations', 0, 'exitflag', 0, 'converged', false), 1, numel(travelSamples));
 for i = 1:numel(travelSamples)
@@ -59,6 +63,8 @@ for i = 1:numel(travelSamples)
     camberTravel(i) = compute_camber_from_pose(geom, pose) + staticCamberOffsetRad;
     toeTravel(i) = compute_toe_from_pose(geom, pose) + opts.StaticToe;
     travelKingpin(:, i) = pose.U_U - pose.L_U;
+    travelWheelCenter(:, i) = pose.W_C;
+    travelContactPatch(:, i) = compute_contact_patch(geom, pose);
     travelSampleValues(i).z_offset_m = travelSamples(i);
     travelSampleValues(i).camber_rad = camberTravel(i);
     travelSampleValues(i).toe_rad = toeTravel(i);
@@ -215,8 +221,11 @@ camberSteerCoeffs = polyfit(steerActualAngles, camberSteer, min(2, nSteerSamples
 toeSteerCoeffs = polyfit(steerActualAngles, toeSteer, min(2, nSteerSamples - 1));
 [rcTravelValues, rcConverged, rcStatus] = sample_rc_with_heave(geom, rightGeom, ...
     travelSamples, opts.UseTieRod, opts.ResidualTolerance);
-rcTravelCoeffs = polyfit(travelFromEq, rcTravelValues, min(1, numel(travelSamples) - 1));
-rcRollCoeffs = polyfit(rollSamples, rollCenterHeights, min(1, numel(rollSamples) - 1));
+rcTravelCoeffs = polyfit(travelFromEq, rcTravelValues, min(2, numel(travelSamples) - 1));
+rcTravelQuad = ensure_quadratic(rcTravelCoeffs);
+% RC height vs roll is even for a symmetric axle: quadratic, not linear (#40).
+rcRollCoeffs = polyfit(rollSamples, rollCenterHeights, min(2, numel(rollSamples) - 1));
+rcRollQuad = ensure_quadratic(rcRollCoeffs);
 
 polyfitQuality = struct( ...
     'travel_camber_max_error_rad', max_fit_error(camberTravelCoeffs, travelFromEq, camberTravel), ...
@@ -225,10 +234,12 @@ polyfitQuality = struct( ...
     'steer_toe_max_error_rad', max_fit_error(toeSteerCoeffs, steerActualAngles, toeSteer), ...
     'rc_travel_max_error_m', max_fit_error(rcTravelCoeffs, travelFromEq, rcTravelValues), ...
     'rc_roll_max_error_m', max_fit_error(rcRollCoeffs, rollSamples, rollCenterHeights));
-polyfitQuality.fit_ok = polyfitQuality.travel_camber_max_error_rad <= 0.02 ...
-    && polyfitQuality.travel_toe_max_error_rad <= 0.02 ...
-    && polyfitQuality.steer_camber_max_error_rad <= 0.02 ...
-    && polyfitQuality.steer_toe_max_error_rad <= 0.02 ...
+% Fit tolerances (#40): toe 1 mrad (bump-steer scale), camber 2 mrad, RC 5 mm.
+polyfitQuality.tolerances = struct('camber_rad', 2e-3, 'toe_rad', 1e-3, 'rc_m', 5e-3);
+polyfitQuality.fit_ok = polyfitQuality.travel_camber_max_error_rad <= 2e-3 ...
+    && polyfitQuality.travel_toe_max_error_rad <= 1e-3 ...
+    && polyfitQuality.steer_camber_max_error_rad <= 2e-3 ...
+    && polyfitQuality.steer_toe_max_error_rad <= 1e-3 ...
     && polyfitQuality.rc_travel_max_error_m <= 0.005 ...
     && polyfitQuality.rc_roll_max_error_m <= 0.005;
 
@@ -246,10 +257,28 @@ kcChecks = struct( ...
     'roll_center_range_m', [min(rollCenterHeights), max(rollCenterHeights)], ...
     'steer_angle_range_rad', max(steerActualAngles) - min(steerActualAngles));
 
+% Side-view swing-arm IC from the projected chassis pivot axes. Outboard
+% brakes react at the contact patch, inboard drive at the wheel centre.
 svic = compute_side_view_ic(geom);
-anti = compute_anti_metrics(svic, opts.CGHeight, opts.Wheelbase, geom.is_front, ...
-    opts.BrakeBiasFront, opts.DriveBiasRear);
-compliance = estimate_compliance_proxy(geom, opts.ComplianceModel, opts.SteeringStiffness);
+leverRatio = opts.Wheelbase / max(opts.CGHeight, 1e-6);
+antiBrakeTravel = zeros(size(travelSamples));
+antiDriveTravel = zeros(size(travelSamples));
+for i = 1:numel(travelSamples)
+    antiBrakeTravel(i) = side_view_tan_theta(svic, travelContactPatch(:, i), geom.is_front) * leverRatio;
+    antiDriveTravel(i) = side_view_tan_theta(svic, travelWheelCenter(:, i), geom.is_front) * leverRatio;
+end
+anti = compute_anti_metrics( ...
+    side_view_tan_theta(svic, staticMetrics.contact_patch, geom.is_front) * leverRatio, ...
+    side_view_tan_theta(svic, nominalPose.W_C, geom.is_front) * leverRatio, ...
+    geom.is_front, opts.BrakeBiasFront, opts.DriveBiasRear);
+antiBrakeCoeffs = polyfit(travelFromEq, antiBrakeTravel, min(2, numel(travelSamples) - 1));
+antiDriveCoeffs = polyfit(travelFromEq, antiDriveTravel, min(2, numel(travelSamples) - 1));
+if isfield(opts.ComplianceModel, 'model') && strcmp(opts.ComplianceModel.model, 'proxy_axial')
+    compliance = estimate_compliance_proxy(geom, opts.ComplianceModel, opts.SteeringStiffness);
+else
+    compliance = compute_compliance_truss(geom, staticMetrics.contact_patch, ...
+        opts.ComplianceModel, opts.SteeringStiffness, opts.UseTieRod && isfield(geom, 'tie_rod_chassis'));
+end
 
 metrics = struct();
 metrics.camber_deg = staticMetrics.camber_deg;
@@ -274,15 +303,28 @@ else
     metrics.rack_samples = [];
 end
 metrics.rack_displacements = steerRack;
+metrics.tie_rod_evaluated = opts.UseTieRod && isfield(geom, 'tie_rod_chassis') ...
+    && isfield(geom, 'tie_rod_upright');
 metrics.roll_samples = rollSamples;
 metrics.camber_vs_travel = ensure_quadratic(camberTravelCoeffs);
 metrics.toe_vs_travel = ensure_quadratic(toeTravelCoeffs);
 metrics.camber_vs_steer = ensure_quadratic(camberSteerCoeffs);
 metrics.toe_vs_steer = ensure_quadratic(toeSteerCoeffs);
-metrics.roll_camber_gain = safe_linear_coeff(rollSamples, leftRollCamber);
-metrics.roll_steer_gain = safe_linear_coeff(rollSamples, leftRollToe);
-metrics.roll_center_height_per_travel = rcTravelCoeffs(1);
-metrics.roll_center_height_per_roll = rcRollCoeffs(1);
+% Roll gains are residuals after removing what camber/toe_vs_travel already
+% give at the roll-induced travel (runtime evaluates both; #38). The single-
+% corner roll pose equals a heave pose, so the residual is only fit error.
+rollTravelFromEq = -halfTrack * rollSamples;
+rollCamberResidual = leftRollCamber - polyval(camberTravelCoeffs, rollTravelFromEq);
+rollToeResidual = leftRollToe - polyval(toeTravelCoeffs, rollTravelFromEq);
+metrics.roll_camber_gain = safe_linear_coeff(rollSamples, rollCamberResidual);
+metrics.roll_steer_gain = safe_linear_coeff(rollSamples, rollToeResidual);
+metrics.roll_camber_gain_total = safe_linear_coeff(rollSamples, leftRollCamber);
+metrics.roll_steer_gain_total = safe_linear_coeff(rollSamples, leftRollToe);
+metrics.roll_gain_definition = 'residual_after_travel_curve';
+metrics.roll_center_height_per_travel = rcTravelQuad(2);
+metrics.roll_center_height_per_travel_sq = rcTravelQuad(3);
+metrics.roll_center_height_per_roll = rcRollQuad(2);
+metrics.roll_center_height_per_roll_sq = rcRollQuad(3);
 metrics.jacking_force_per_fy = staticMetrics.roll_center_z / max(halfTrack, 1e-6);
 metrics.anti_dive_pct = anti.dive;
 metrics.anti_squat_pct = anti.squat;
@@ -290,12 +332,20 @@ metrics.anti_lift_pct = anti.lift;
 metrics.anti_rise_pct = anti.rise;
 metrics.anti_brake_pct = anti.brake;
 metrics.anti_drive_pct = anti.drive;
-metrics.anti_model = 'side_view_ic_with_assumed_bias';
+% anti_brake/anti_drive are per-axle force fractions (tan(theta)*L/h, no bias):
+% the runtime applies them to each wheel's own Fx. dive/rise/squat/lift are
+% the classical bias-weighted percentages for reporting.
+metrics.anti_brake_vs_travel = ensure_quadratic(antiBrakeCoeffs);
+metrics.anti_drive_vs_travel = ensure_quadratic(antiDriveCoeffs);
+metrics.anti_brake_curve = antiBrakeTravel;
+metrics.anti_drive_curve = antiDriveTravel;
+metrics.side_view_ic = svic;
+metrics.anti_model = 'side_view_pivot_axes_ic';
 metrics.anti_validated = false;
 metrics.jacking_model = 'roll_center_derived_proxy';
 metrics.jacking_validated = false;
 metrics.compliance = compliance;
-metrics.compliance_model = 'arm_axial_stiffness_proxy';
+metrics.compliance_model = compliance.model;
 metrics.compliance_validated = false;
 metrics.sample_values = struct( ...
     'travel', travelSampleValues, ...
@@ -303,6 +353,31 @@ metrics.sample_values = struct( ...
     'steer', steerSampleValues);
 metrics.polyfit_quality = polyfitQuality;
 metrics.kc_checks = kcChecks;
+% LUT-ready arrays (#40): knots ascending in compression-positive travel.
+[travelKnots, order] = sort(travelFromEq);
+kpDown = -travelKingpin(:, order) ./ max(vecnorm(travelKingpin(:, order), 2, 1), 1e-9);
+sideSign = 1 - 2 * geom.is_left;  % +1 right, -1 left: outward = sideSign * Y
+[rollKnots, rollOrder] = sort(rollSamples);
+[steerKnots, steerOrder] = sort(steerActualAngles);
+metrics.lut_samples = struct( ...
+    'travel_m', travelKnots, ...
+    'camber_rad', camberTravel(order), ...
+    'toe_rad', toeTravel(order), ...
+    'caster_rad', atan2(kpDown(1, :), kpDown(3, :)), ...
+    'kpi_rad', atan2(sideSign * kpDown(2, :), kpDown(3, :)), ...
+    'track_change_m', sideSign * (travelContactPatch(2, order) - staticMetrics.contact_patch(2)), ...
+    'rc_height_m', -rcTravelValues(order), ...
+    'jacking_force_per_fy', rcTravelValues(order) / max(halfTrack, 1e-6), ...
+    'anti_brake', antiBrakeTravel(order), ...
+    'anti_drive', antiDriveTravel(order), ...
+    'roll_rad', rollKnots, ...
+    'roll_camber_residual_rad', rollCamberResidual(rollOrder), ...
+    'roll_toe_residual_rad', rollToeResidual(rollOrder), ...
+    'roll_center_height_m', -rollCenterHeights(rollOrder), ...
+    'steer_rad', steerKnots, ...
+    'steer_rack_m', steerRack(steerOrder), ...
+    'steer_camber_rad', camberSteer(steerOrder), ...
+    'steer_toe_rad', toeSteer(steerOrder));
 metrics.travel_camber_curve = camberTravel;
 metrics.travel_toe_curve = toeTravel;
 metrics.steer_camber_curve = camberSteer;
@@ -331,7 +406,52 @@ metrics.fsolve_calls = numel(travelSamples) + 2 * numel(travelSamples) ...
 metrics.solver_status.fsolve_calls = metrics.fsolve_calls;
 metrics.converged = travelConverged && steerConverged && rollConverged && ...
     rcConverged && travelBranchContinuous && steerBranchContinuous;
+if useClosedLink && ~isempty(opts.SteerMapTravelSamples)
+    metrics.steer_map = compute_steer_map(geom, rackSamples, opts.SteerMapTravelSamples, ...
+        opts.ResidualTolerance);
+    metrics.converged = metrics.converged && metrics.steer_map.converged;
+end
 metrics.elapsed_s = toc(eval_start);
+end
+
+function map = compute_steer_map(geom, rackSamples, travelOffsets, tol)
+% Wheel steer angle on a rack x wheel-travel grid from the closed-link solve
+% (#43). Bump steer (the rack = 0 column) is removed so that the runtime can
+% add toe_vs_travel without counting it twice. Rows sweep outward from the
+% rack centre for continuation.
+rack = sort(reshape(rackSamples, 1, []));
+dz = sort(reshape(travelOffsets, 1, []), 'descend');   % ascending compression
+nR = numel(rack);
+nT = numel(dz);
+steer = zeros(nT, nR);
+ok = true;
+[~, c] = min(abs(rack));
+rowGuess = [];
+for it = 1:nT
+    z = geom.W_C(3) + dz(it);
+    for order = {c:nR, c-1:-1:1}
+        guess = rowGuess;
+        for ir = order{1}
+            pose = solve_pose_for_rack(geom, rack(ir), z, guess, tol);
+            ok = ok && pose.converged;
+            if pose.converged
+                guess = pose.solver_vars;
+                if ir == c
+                    rowGuess = guess;
+                end
+            end
+            steer(it, ir) = pose.steer_angle;
+        end
+    end
+end
+bump = interp1(rack, steer.', 0.0).';
+map = struct( ...
+    'rack_travel_m', rack, ...
+    'wheel_travel_m', -dz, ...
+    'steer_rad', steer - bump, ...
+    'bump_steer_removed_rad', bump.', ...
+    'converged', ok, ...
+    'layout', 'steer_rad[i_wheel_travel][j_rack]');
 end
 
 function [values, converged, status] = sample_rc_with_heave(leftGeom, rightGeom, ...
@@ -588,8 +708,7 @@ else
     staticMetrics.kpi_deg = atan2d(K_down(2), K_down(3));
 end
 
-contactPatch = pose.W_C;
-contactPatch(3) = contactPatch(3) + geom.R_tire;
+contactPatch = compute_contact_patch(geom, pose);
 staticMetrics.contact_patch = contactPatch;
 tp = signed_divide(contactPatch(3) - pose.L_U(3), K_dir(3));
 pierce = pose.L_U + tp * K_dir;
@@ -659,48 +778,81 @@ else
     sol = A \ b;
     ic = [pose.U_U(2) + sol(1) * dirUp(1), pose.U_U(3) + sol(1) * dirUp(2)];
 end
-cp3 = pose.W_C(3) + geom.R_tire;
-cp = [pose.W_C(2), cp3];
-ic = [ic(1), ic(2)];
+cp3 = compute_contact_patch(geom, pose);
+cp = [cp3(2), cp3(3)];
 end
 
 function svic = compute_side_view_ic(geom)
-U_C = (geom.U_F + geom.U_R) / 2;
-L_C = (geom.L_F + geom.L_R) / 2;
-dirUp = [geom.U_U(1) - U_C(1), geom.U_U(3) - U_C(3)];
-dirLow = [geom.L_U(1) - L_C(1), geom.L_U(3) - L_C(3)];
-A = [dirUp(1), -dirLow(1); dirUp(2), -dirLow(2)];
-b = [geom.L_U(1) - geom.U_U(1); geom.L_U(3) - geom.U_U(3)];
-if abs(det(A)) < 1e-9
-    svic = [1e6, geom.W_C(3)];
+% Intersection of the upper and lower pivot axes projected on X-Z. Parallel
+% axes put the IC at infinity along their common direction (dir, X > 0).
+pu = [geom.U_F(1); geom.U_F(3)];
+du = [geom.U_R(1) - geom.U_F(1); geom.U_R(3) - geom.U_F(3)];
+pl = [geom.L_F(1); geom.L_F(3)];
+dl = [geom.L_R(1) - geom.L_F(1); geom.L_R(3) - geom.L_F(3)];
+A = [du, -dl];
+dir = du / max(norm(du), 1e-12);
+if dir(1) < 0
+    dir = -dir;
+end
+svic = struct('at_infinity', false, 'point_xz', [NaN, NaN], 'dir_xz', dir(:)');
+if abs(det(A)) < 1e-9 * max(norm(du) * norm(dl), 1e-12)
+    svic.at_infinity = true;
 else
-    sol = A \ b;
-    svic = [geom.U_U(1) + sol(1) * dirUp(1), geom.U_U(3) + sol(1) * dirUp(2)];
+    s = A \ (pl - pu);
+    svic.point_xz = (pu + s(1) * du)';
 end
 end
 
-function anti = compute_anti_metrics(svic, cgHeight, wheelbase, isFront, brakeBias, driveBias)
-if ~isfinite(svic(1)) || abs(svic(1)) < 1e-9
-    geometry = 0.0;
-else
-    slope = signed_divide(svic(2), svic(1));
-    geometry = abs(slope) * wheelbase / max(cgHeight, 1e-6);
+function t = side_view_tan_theta(svic, refPoint, isFront)
+% tan(theta) of the reaction line from refPoint to the side-view IC. Positive
+% means anti (front: IC behind and above; rear: IC ahead and above, Z down).
+if svic.at_infinity
+    t = svic.dir_xz(2) / max(svic.dir_xz(1), 1e-12);
+    if ~isFront
+        t = -t;
+    end
+    return;
 end
-clamp = @(x) max(0.0, min(1.0, x));
-dive = clamp(geometry * brakeBias);
-rise = clamp(geometry * (1.0 - brakeBias));
-lift = clamp(geometry * (1.0 - driveBias));
-squat = clamp(geometry * driveBias);
+dz = refPoint(3) - svic.point_xz(2);
 if isFront
-    brake = dive;
-    drive = lift;
+    t = signed_divide(dz, refPoint(1) - svic.point_xz(1));
 else
-    brake = rise;
-    drive = squat;
+    t = signed_divide(dz, svic.point_xz(1) - refPoint(1));
+end
+end
+
+function anti = compute_anti_metrics(brakeFraction, driveFraction, isFront, brakeBias, driveBias)
+if isFront
+    brake = brakeFraction;
+    drive = driveFraction;
+    dive = brakeFraction * brakeBias;
+    lift = driveFraction * (1.0 - driveBias);
+    rise = 0.0;
+    squat = 0.0;
+else
+    brake = brakeFraction;
+    drive = driveFraction;
+    rise = brakeFraction * (1.0 - brakeBias);
+    squat = driveFraction * driveBias;
+    dive = 0.0;
+    lift = 0.0;
 end
 anti = struct('dive', dive, 'squat', squat, 'lift', lift, 'rise', rise, ...
     'brake', brake, 'drive', drive, ...
     'brake_bias_front', brakeBias, 'drive_bias_rear', driveBias);
+end
+
+function cp = compute_contact_patch(geom, pose)
+% Ground contact point: wheel centre plus the loaded radius along the wheel
+% plane's downward direction (includes the R*sin(camber) lateral shift).
+spindle = pose.R_upright * get_spindle_nominal(geom);
+down = [0; 0; 1] - spindle(3) * spindle;
+down = down / max(norm(down), 1e-9);
+radius = geom.R_tire;
+if isfield(geom, 'R_loaded') && ~isempty(geom.R_loaded)
+    radius = geom.R_loaded;
+end
+cp = pose.W_C + radius * down;
 end
 
 function comp = estimate_compliance_proxy(geom, model, steeringStiffness)
@@ -729,6 +881,8 @@ deltaFx = upperDir(1) / upperK - lowerDir(1) / lowerK;
 comp = struct();
 comp.model = 'arm_axial_stiffness_proxy';
 comp.validated = false;
+comp.provisional = true;
+comp.scope = 'proxy_not_validated';
 comp.units = 'toe/camber/caster: rad/N; track/wheelbase: m/N';
 comp.basis = 'wheel center, SAE J670e'; ...
 comp.sign_convention = 'positive Fx/Fy in SAE axes; upper-minus-lower axial compliance';
@@ -742,6 +896,140 @@ comp.toe_per_load(1) = deltaFx / verticalSep;
 if geom.is_front
     comp.toe_per_load(6) = 1.0 / max(steeringStiffness, 1e-6);
 end
+end
+
+function comp = compute_compliance_truss(geom, contactPatch, model, steeringStiffness, hasTieRod)
+% Level-1 linear compliance (#41): rigid upright (6 DOF at the wheel centre)
+% on two free ball-joint nodes. Each A-arm leg, the tie rod / toe link and the
+% pushrod are axial members (tube EA/L in series with their rod ends); ball
+% joints are isotropic springs. Solved with backslash for unit wrenches.
+% Default stiffnesses are order-of-magnitude values, not measurements:
+%   tube: steel E = 200 GPa, 19.05 x 1.6 mm (previous proxy values);
+%   rod end (spherical rod end, radial/axial): 3e7 N/m and ball joint
+%   (pressed spherical bearing): 1e8 N/m, typical of published FSAE
+%   K&C compliance studies (1e7..1e8 N/m). Replace with rig data.
+% ponytail: chassis mounts, upright and arm bending are rigid; add shell/beam
+%   FE or K&C rig matrices when available.
+defaults = struct('youngs_modulus', 2.0e11, 'outer_diameter_m', 0.01905, ...
+    'wall_thickness_m', 0.0016, 'rod_end_stiffness_n_per_m', 3.0e7, ...
+    'ball_joint_stiffness_n_per_m', 1.0e8, 'ride_restraint_n_per_m', 1.0e9, ...
+    'stiffness_source', 'default_order_of_magnitude');
+for f = fieldnames(defaults)'
+    if ~isfield(model, f{1})
+        model.(f{1}) = defaults.(f{1});
+    end
+end
+Do = model.outer_diameter_m;
+Di = max(Do - 2 * model.wall_thickness_m, 0.0);
+EA = model.youngs_modulus * pi / 4 * (Do^2 - Di^2);
+kRe = model.rod_end_stiffness_n_per_m;
+series = @(varargin) 1 / sum(1 ./ [varargin{:}]);
+member = @(a, b, nEnds) series(EA / max(norm(b - a), 1e-6), kRe / nEnds);
+
+WC = geom.W_C;
+nDof = 12;                       % node U (1:3), node L (4:6), upright [u; theta] (7:12)
+K = zeros(nDof);
+fixedT = zeros(3, nDof);
+nodeT = @(j) [zeros(3, 3 * (j - 1)), eye(3), zeros(3, nDof - 3 * j)];
+uprightT = @(r) [zeros(3, 6), eye(3), -skew3(r - WC)];
+    function addSpring(Ta, Tb, a, b, k)
+        n = (b - a) / max(norm(b - a), 1e-12);
+        g = n' * (Tb - Ta);
+        K = K + k * (g' * g);
+    end
+% A-arm legs: chassis rod end (1 end) + tube; outer end is the ball joint.
+addSpring(fixedT, nodeT(1), geom.U_F, geom.U_U, member(geom.U_F, geom.U_U, 1));
+addSpring(fixedT, nodeT(1), geom.U_R, geom.U_U, member(geom.U_R, geom.U_U, 1));
+addSpring(fixedT, nodeT(2), geom.L_F, geom.L_U, member(geom.L_F, geom.L_U, 1));
+addSpring(fixedT, nodeT(2), geom.L_R, geom.L_U, member(geom.L_R, geom.L_U, 1));
+kBj = model.ball_joint_stiffness_n_per_m;
+for e = eye(3)
+    addSpring(nodeT(1), uprightT(geom.U_U), geom.U_U, geom.U_U + e, kBj);
+    addSpring(nodeT(2), uprightT(geom.L_U), geom.L_U, geom.L_U + e, kBj);
+end
+kpDir = (geom.U_U - geom.L_U) / norm(geom.U_U - geom.L_U);
+assumptions = {'upright_rigid', 'chassis_mounts_rigid', 'arms_axial_only'};
+if hasTieRod
+    a = geom.tie_rod_chassis;
+    b = geom.tie_rod_upright;
+    kLink = member(a, b, 2);
+    if geom.is_front
+        % Steering system (column/rack) in series, mapped to the tie-rod axis
+        % through the tie-rod moment arm about the kingpin.
+        n = (b - a) / norm(b - a);
+        arm = abs(dot(cross(b - geom.L_U, n), kpDir));
+        kLink = series(kLink, steeringStiffness / max(arm^2, 1e-6));
+        assumptions{end + 1} = 'steering_stiffness_in_series_with_tie_rod';
+    end
+    addSpring(fixedT, uprightT(b), a, b, kLink);
+else
+    g = [zeros(1, 9), kpDir'];
+    K = K + steeringStiffness * (g' * g);
+    assumptions{end + 1} = 'toe_dof_restrained_by_steering_stiffness_param';
+end
+if isfield(geom, 'pushrod_chassis') && isfield(geom, 'pushrod_upright')
+    addSpring(fixedT, uprightT(geom.pushrod_upright), geom.pushrod_chassis, ...
+        geom.pushrod_upright, member(geom.pushrod_chassis, geom.pushrod_upright, 2));
+    assumptions{end + 1} = 'pushrod_on_upright_rocker_locked';
+else
+    addSpring(fixedT, uprightT(WC), WC, WC + [0; 0; 1], model.ride_restraint_n_per_m);
+    assumptions{end + 1} = 'no_pushrod_hardpoints_ride_height_held_by_rig_restraint';
+end
+
+% Unit wrenches: forces at the contact patch, moments as pure couples.
+F = zeros(nDof, 6);
+r = contactPatch - WC;
+for i = 1:3
+    e = zeros(3, 1);
+    e(i) = 1;
+    F(7:12, i) = [e; cross(r, e)];
+    F(10:12, 3 + i) = e;
+end
+Q = K \ F;
+
+sideSign = 1 - 2 * geom.is_left;
+fwdSign = 1 - 2 * ~geom.is_front;
+nominal = struct('R_upright', eye(3));
+toe0 = compute_toe_from_pose(geom, nominal);
+camber0 = compute_camber_from_pose(geom, nominal);
+caster = @(R) atan2(-(R(1, :) * kpDir), -(R(3, :) * kpDir));
+caster0 = caster(eye(3));
+comp = struct();
+comp.toe_per_load = zeros(1, 6);
+comp.camber_per_load = zeros(1, 6);
+comp.caster_per_load = zeros(1, 6);
+comp.track_per_load = zeros(1, 6);
+comp.wheelbase_per_load = zeros(1, 6);
+for i = 1:6
+    theta = Q(10:12, i);
+    s = 1e-6 / max(norm(theta), eps);
+    R = axis_angle_rotation_local(theta, s * norm(theta));
+    pose = struct('R_upright', R);
+    comp.toe_per_load(i) = (compute_toe_from_pose(geom, pose) - toe0) / s;
+    comp.camber_per_load(i) = (compute_camber_from_pose(geom, pose) - camber0) / s;
+    comp.caster_per_load(i) = (caster(R) - caster0) / s;
+    dCp = Q(7:9, i) + cross(theta, r);
+    comp.track_per_load(i) = sideSign * dCp(2);
+    comp.wheelbase_per_load(i) = fwdSign * dCp(1);
+end
+comp.model = 'truss_level1';
+comp.validated = false;
+comp.provisional = strcmp(model.stiffness_source, 'default_order_of_magnitude');
+if comp.provisional
+    comp.scope = 'model_default_stiffness';
+else
+    comp.scope = 'model_supplied_stiffness';
+end
+comp.stiffness = rmfield(model, intersect(fieldnames(model), {'model'}));
+comp.assumptions = assumptions;
+comp.units = 'toe/camber/caster: rad per N (Fx,Fy,Fz) or per N*m (Mx,My,Mz); track/wheelbase: m per unit';
+comp.basis = 'forces at contact patch, moments as couples; SAE J670e';
+comp.sign_convention = ['columns Fx,Fy,Fz,Mx,My,Mz in SAE axes; toe = wheel yaw (nose right +, runtime total_yaw); camber top-outboard +; ', ...
+    'track = contact-patch outboard motion; wheelbase = contact-patch motion away from the other axle'];
+end
+
+function S = skew3(v)
+S = [0, -v(3), v(2); v(3), 0, -v(1); -v(2), v(1), 0];
 end
 
 function camber = compute_camber_from_pose(geom, pose)
