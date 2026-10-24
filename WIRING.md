@@ -29,4 +29,14 @@ Changes the AERO-PT package could not make itself (file-set rule). Apply verbati
    throttle 0 in the default gear 3 and now sees engine braking (≈−27 Nm wheel torque at 15 m/s), r differs by
    0.0203 vs tol 0.02. That test is a lateral contract at constant speed: set `input.gear = 0;` (neutral) there.
 
-## #35 LSD — see below
+## #35 LSD (`cpp/include/fsae/physics/powertrain/lsd.hpp`)
+
+1. New `SalisburyLSD::Params::omega_smooth` [rad/s] (default 0.1; RK4 @1 ms stability bound with Iw=0.5 is ≥0.094).
+   Optional: add `lsd_omega_smooth` to `PowertrainParams` + JSON and copy it in `setup_powertrain()`.
+   If `Iw` is lowered or `T_lock` > ~130 Nm, raise ω_s so that `T_lock·dt/(Iw·ω_s) < 2.78`.
+2. `cpp/src/test_lsd_14dof.cpp` (CORE-A): bias is now `T_lock·tanh(Δω/ω_s)` without the `|T_in|/2` cap, preload acts at
+   coast, and with #34 engine braking the decel ramp (`lsd_ramp_decel`) is selected under closed throttle. Expectations
+   that assumed "no LSD effect at zero torque" or an accel-ramp-only result need updating; #34 acceptance wants a case
+   showing `lsd_ramp_decel` changes the result (e.g. closed-throttle turn-in, compare 45° vs 60°).
+3. No locking constraint was added (wheels still integrate independently); a real static lock would need
+   reducing RL/RR spin to one DOF while |T_bias| < T_lock — not done (cost/complexity), marked `ponytail:` in lsd.hpp.

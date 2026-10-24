@@ -211,10 +211,51 @@ void test_real_world_scenario() {
     std::cout << "→ 外輪（高速側）にもトルクが配分され、トラクション向上\n";
 }
 
+// #35: 連続 tanh バイアス・コースト時プリロード・減速ランプ選択の判定（失敗数を返す）
+int check_lsd_physics() {
+    int failures = 0;
+    auto check = [&](bool ok, const char* what) {
+        std::cout << (ok ? "  PASS " : "  FAIL ") << what << "\n";
+        if (!ok) ++failures;
+    };
+    print_section("判定 (#35)");
+    const auto p = SalisburyLSD::Params::fsae_traction_focused();
+    SalisburyLSD lsd(p);
+    double tl = 0.0, tr = 0.0;
+
+    // コースト（入力 0）でもプリロードが差速に抗する
+    lsd.distribute_torque(0.0, 51.0, 50.0, tl, tr);
+    check(std::abs((tr - tl) - p.preload_torque * std::tanh(1.0 / p.omega_smooth)) < 1e-9,
+          "coast: preload acts with zero input torque");
+    check(std::abs(tl + tr) < 1e-12, "coast: torque sum conserved");
+
+    // 連続性: Δω 0 を跨いで滑らか（旧 0.01 rad/s デッドバンドの不連続が無い）
+    double tl_a, tr_a, tl_b, tr_b;
+    lsd.distribute_torque(300.0, 50.0 + 0.009, 50.0, tl_a, tr_a);
+    lsd.distribute_torque(300.0, 50.0 + 0.011, 50.0, tl_b, tr_b);
+    check(std::abs((tr_b - tl_b) - (tr_a - tl_a)) < 0.05 * p.preload_torque, "bias continuous across old deadband");
+    lsd.distribute_torque(300.0, 50.0, 50.0, tl, tr);
+    check(std::abs(tl - tr) < 1e-12, "zero slip -> equal split");
+
+    // 減速ランプは負トルクで選択される（エンジンブレーキで有効）
+    const double lock_acc = lsd.compute_locking_torque(500.0, 51.0, 50.0);
+    const double lock_dec = lsd.compute_locking_torque(-500.0, 51.0, 50.0);
+    check(lock_dec < lock_acc, "decel ramp (larger angle) selected for negative input torque");
+    lsd.distribute_torque(-500.0, 60.0, 50.0, tl, tr);
+    check(std::abs((tr - tl) - lock_dec * std::tanh(10.0 / p.omega_smooth)) < 1e-9,
+          "engine braking: bias uses decel-ramp locking torque, no |T_in| cap");
+    return failures;
+}
+
 int main() {
     std::cout << "FSAE Salisbury LSD テストプログラム\n";
     std::cout << "======================================\n";
-    
+
+    if (check_lsd_physics() > 0) {
+        std::cerr << "LSD checks FAILED\n";
+        return 1;
+    }
+
     try {
         test_lsd_basic();
         test_torque_distribution();
