@@ -202,6 +202,10 @@ struct SimulationConfig {
     std::string ggv_file;
     bool max_lon_explicit = false;
 
+    // 風ベクトル（地図座標 [m/s]、Issue #28, --wind wx,wy）。プラントへの受け渡しは WIRING.md
+    double wind_x = 0.0;
+    double wind_y = 0.0;
+
     // CSV トラックの周回フラグ（--track-closed / --track-open）。未指定は CSV `# closed=` → 警告付きヒューリスティック
     std::optional<bool> track_closed;
 };
@@ -1182,6 +1186,11 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
         result.velocity_profile_uses_planned_line = !perf.curvature_override.empty();
     }
 
+    if (config.wind_x != 0.0 || config.wind_y != 0.0) {
+        // ponytail: CLI + config only; the 14DOF relative-air-speed/yaw hook is specified in WIRING.md
+        std::cerr << "[wind] (" << config.wind_x << ", " << config.wind_y
+                  << ") m/s map frame: NOT yet applied — plant hook pending (WIRING.md)" << std::endl;
+    }
     if (!config.ggv_file.empty()) {
         try {
             perf.ggv = std::make_shared<const laptime::GGVMap>(laptime::GGVMap::load(config.ggv_file));
@@ -3181,6 +3190,13 @@ int main(int argc, char** argv) {
         else if (arg == "--max-lon-accel" && i + 1 < argc) { config.max_lon_accel = std::stod(argv[++i]); config.max_lon_explicit = true; }
         else if (arg == "--max-lon-decel" && i + 1 < argc) { config.max_lon_decel = std::stod(argv[++i]); config.max_lon_explicit = true; }
         else if (arg == "--ggv" && i + 1 < argc) config.ggv_file = argv[++i];
+        else if (arg == "--wind" && i + 1 < argc) {
+            const std::string w = argv[++i];
+            const auto comma = w.find(',');
+            if (comma == std::string::npos) { std::cerr << "--wind expects wx,wy [m/s]" << std::endl; return 1; }
+            config.wind_x = std::stod(w.substr(0, comma));
+            config.wind_y = std::stod(w.substr(comma + 1));
+        }
         else if (arg == "--kp-steer" && i + 1 < argc) { config.Kp_steer = std::stod(argv[++i]); config.use_custom_gains = true; }
         else if (arg == "--kd-steer" && i + 1 < argc) { config.Kd_steer = std::stod(argv[++i]); config.use_custom_gains = true; }
         else if (arg == "--ki-steer" && i + 1 < argc) { config.Ki_steer = std::stod(argv[++i]); config.use_custom_gains = true; }

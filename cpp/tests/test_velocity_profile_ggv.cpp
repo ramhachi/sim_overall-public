@@ -187,6 +187,50 @@ TEST(LapPlanner, AttackSteeringCapUsesSteadyStateTable) {
     EXPECT_NEAR(plan.sample_at(60.0).steering_speed_cap, v_star, 1e-6);
 }
 
+// Issue #28: bank raises the corner speed (ay_eff = v²κ − g sinφ, load × cosφ),
+// grade costs g·sinθ of forward acceleration, mu_scale scales the friction envelope.
+TEST(LapPlanner, TerrainBankGradeMuScale) {
+    auto perf = base_perf();
+    perf.cl_a = 0.0;
+    perf.cd_a = 0.0;
+    perf.friction_margin = 1.0;
+    const double R = 20.0, g = 9.81;
+    auto ring = [&](double bank, double mu_scale) {
+        std::vector<track::TrackPoint> pts;
+        const int n = 400;
+        for (int i = 0; i <= n; ++i) {
+            const double a = 2.0 * M_PI * i / n;
+            track::TrackPoint p{a * R, R * std::cos(a), R * std::sin(a), a + M_PI / 2.0, 1.0 / R, 2.0, 2.0};
+            p.bank = bank;
+            p.mu_scale = mu_scale;
+            pts.push_back(p);
+        }
+        return track::CurvatureBasedTrack(pts, true);
+    };
+    const double phi = 10.0 * M_PI / 180.0;
+    const double v_flat = laptime::VelocityProfileGenerator(perf).generate(ring(0.0, 1.0))[40].v;
+    const double v_bank = laptime::VelocityProfileGenerator(perf).generate(ring(phi, 1.0))[40].v;
+    const double v_wet = laptime::VelocityProfileGenerator(perf).generate(ring(0.0, 0.5))[40].v;
+    const double mu = perf.mu_lat;
+    EXPECT_NEAR(v_flat, std::sqrt(mu * g * R), 1e-6);
+    // v²/R − g sinφ = μ g cosφ
+    EXPECT_NEAR(v_bank, std::sqrt(R * g * (std::sin(phi) + mu * std::cos(phi))), 1e-4);
+    EXPECT_NEAR(v_wet, std::sqrt(0.5 * mu * g * R), 1e-4);
+
+    // 5 % uphill straight from rest: a = max_lon_accel − g sinθ
+    std::vector<track::TrackPoint> hill;
+    const double th = std::atan(0.05);
+    for (int i = 0; i <= 50; ++i) {
+        track::TrackPoint p{double(i), double(i), 0.0, 0.0, 0.0, 2.0, 2.0};
+        p.grade = th;
+        hill.push_back(p);
+    }
+    track::CurvatureBasedTrack hill_track(hill);
+    hill_track.set_closed(false);
+    const auto up = laptime::VelocityProfileGenerator(perf).generate(hill_track, 1.0, 0.0);
+    EXPECT_NEAR(up[20].v, std::sqrt(2.0 * (perf.max_lon_accel - g * std::sin(th)) * 20.0), 1e-6);
+}
+
 // Issue #26: one explicit margin, applied once to the lateral limit (v ∝ sqrt(m)); legacy
 // factors default to 1.0.
 TEST(LapPlanner, SingleFrictionMarginAppliedOnce) {

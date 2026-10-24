@@ -26,6 +26,10 @@ struct VelocityPoint {
     double ay;       // 横加速度 [m/s²]
     double kappa;    // 曲率 [1/m] (計算用)
     double steering_speed_cap = std::numeric_limits<double>::infinity(); // 操舵到達性由来の速度上限 [m/s]
+    // 路面（Issue #28、TrackPoint から）
+    double bank = 0.0;      // [rad] κ>0（左旋回）を助ける向きが正
+    double grade = 0.0;     // [rad] 登り正
+    double mu_scale = 1.0;  // [-]
 };
 
 /// 車両性能パラメータ
@@ -160,8 +164,28 @@ private:
             vp.s = s;
             vp.kappa = curvature_at(track, s);
             double kappa_abs = std::abs(vp.kappa);
+            if (!track.points().empty()) {
+                const auto tp = track.get_point(s);
+                vp.bank = tp.bank;
+                vp.grade = tp.grade;
+                vp.mu_scale = tp.mu_scale;
+            }
+            const bool flat = vp.bank == 0.0 && vp.grade == 0.0 && vp.mu_scale == 1.0;
 
-            if (kappa_abs > 1e-6 && perf_.ggv) {
+            if (kappa_abs > 1e-6 && !flat) {
+                // 路面補正あり: |v²κ − g sinφ| ≤ lat_limit(v, p) を二分法で解く
+                double lo = 0.0, hi = perf_.max_speed;
+                auto ok = [&](double v) { return lat_ratio_raw(v, vp) <= 1.0; };
+                if (ok(hi)) {
+                    lo = hi;
+                } else {
+                    for (int it = 0; it < 50; ++it) {
+                        const double mid = 0.5 * (lo + hi);
+                        (ok(mid) ? lo : hi) = mid;
+                    }
+                }
+                vp.v = std::min(lo * perf_.safety_factor, perf_.max_speed);
+            } else if (kappa_abs > 1e-6 && perf_.ggv) {
                 vp.v = std::min(perf_.ggv->corner_speed(kappa_abs, perf_.friction_margin, perf_.max_speed)
                                     * perf_.safety_factor,
                                 perf_.max_speed);
@@ -288,7 +312,7 @@ private:
             auto& curr = profile[i];
             double ds = curr.s - prev.s;
 
-            const double ax_max = accel_limit(prev.v, prev.v * prev.v * prev.kappa);
+            const double ax_max = accel_limit(prev.v, prev);
 
             // 積分
             double v_accel_sq = prev.v * prev.v + 2.0 * ax_max * ds;
@@ -306,7 +330,7 @@ private:
             auto& next = profile[i + 1];
             double ds = next.s - curr.s;
 
-            const double decel_max = brake_limit(next.v, next.v * next.v * next.kappa);
+            const double decel_max = brake_limit(next.v, next);
 
             // 積分
             double v_brake_sq = next.v * next.v + 2.0 * decel_max * ds;
@@ -336,34 +360,51 @@ private:
 
     // ---- 限界モデル: GGV 表（Issue #23）または閉形式（μ スカラー楕円）フォールバック ----
 
-    /// 使用可能 |ay| 限界 [m/s^2]（friction_margin 適用済み）
-    double lat_limit(double v) const {
-        return perf_.ggv ? perf_.friction_margin * perf_.ggv->ay_limit(v) : get_max_lat_accel(v);
+    /// 使用可能 |ay| 限界 [m/s^2]（friction_margin 適用済み）。路面: μ_scale と法線荷重 cosθ·cosφ を乗算
+    /// ponytail: 法線荷重係数をダウンフォース分にも掛けている（保守側）、DF を分離すれば厳密
+    double lat_limit(double v, const VelocityPoint& p) const {
+        const double base = perf_.ggv ? perf_.friction_margin * perf_.ggv->ay_limit(v) : get_max_lat_accel(v);
+        return base * p.mu_scale * std::cos(p.grade) * std::cos(p.bank);
     }
 
-    double lat_ratio(double v, double ay) const {
-        return std::clamp(std::abs(ay) / std::max(lat_limit(v), 1e-6), 0.0, 1.0);
+    /// 路面横成分を差し引いた有効横加速度 ay_eff = v²κ − g sinφ
+    static double ay_eff(double v, const VelocityPoint& p) {
+        return v * v * p.kappa - 9.81 * std::sin(p.bank);
     }
 
-    /// 正味の前進加速限界 [m/s^2] ≥ 0（空気抵抗込み）
-    double accel_limit(double v, double ay) const {
-        const double r = lat_ratio(v, ay);
+    double lat_ratio_raw(double v, const VelocityPoint& p) const {
+        return std::abs(ay_eff(v, p)) / std::max(lat_limit(v, p), 1e-6);
+    }
+
+    double lat_ratio(double v, const VelocityPoint& p) const {
+        return std::clamp(lat_ratio_raw(v, p), 0.0, 1.0);
+    }
+
+    /// 正味の前進加速限界 [m/s^2]（空気抵抗・勾配 g sinθ 込み、急な登りでは負もあり得る）
+    double accel_limit(double v, const VelocityPoint& p) const {
+        const double r = lat_ratio(v, p);
+        double ax;
         if (perf_.ggv) {
-            const double ax = perf_.ggv->ax_accel(v, r);
-            return std::max(0.0, perf_.lon_limits_are_caps ? std::min(ax, perf_.max_lon_accel) : ax);
+            ax = perf_.ggv->ax_accel(v, r);
+            if (perf_.lon_limits_are_caps) ax = std::min(ax, perf_.max_lon_accel);
+        } else {
+            ax = perf_.max_lon_accel * std::sqrt(1.0 - r * r) - get_drag_accel(v);
         }
-        return std::max(0.0, perf_.max_lon_accel * std::sqrt(1.0 - r * r) - get_drag_accel(v));
+        return std::max(0.0, ax) * p.mu_scale - 9.81 * std::sin(p.grade);
     }
 
-    /// 正味の減速限界の大きさ [m/s^2] ≥ 0（空気抵抗込み、friction_margin 適用）
+    /// 正味の減速限界の大きさ [m/s^2]（空気抵抗・勾配込み、friction_margin 適用）
     /// ponytail: GGV 経路では margin が空気抵抗分にも掛かる（〜1 %）、ax_min を tire/drag 分離で保存すれば解消
-    double brake_limit(double v, double ay) const {
-        const double r = lat_ratio(v, ay);
+    double brake_limit(double v, const VelocityPoint& p) const {
+        const double r = lat_ratio(v, p);
+        double d;
         if (perf_.ggv) {
-            const double d = perf_.friction_margin * perf_.ggv->ax_brake(v, r);
-            return perf_.lon_limits_are_caps ? std::min(d, perf_.max_lon_decel) : d;
+            d = perf_.friction_margin * perf_.ggv->ax_brake(v, r);
+            if (perf_.lon_limits_are_caps) d = std::min(d, perf_.max_lon_decel);
+        } else {
+            d = perf_.friction_margin * perf_.max_lon_decel * std::sqrt(1.0 - r * r) + get_drag_accel(v);
         }
-        return perf_.friction_margin * perf_.max_lon_decel * std::sqrt(1.0 - r * r) + get_drag_accel(v);
+        return std::max(0.0, d * p.mu_scale + 9.81 * std::sin(p.grade));
     }
 
     /// 速度に応じた使用可能横加速度（空力考慮、friction_margin を 1 回だけ適用）
