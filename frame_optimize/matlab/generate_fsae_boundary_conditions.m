@@ -1,4 +1,4 @@
-function [bcs, loads] = generate_fsae_boundary_conditions(nodes, load_case_name, config)
+function [bcs, loads, fixture] = generate_fsae_boundary_conditions(nodes, load_case_name, config)
 % GENERATE_FSAE_BOUNDARY_CONDITIONS Generate physically correct BCs for FSAE frame
 %
 % Generates boundary conditions matching real FSAE torsional rigidity test setup:
@@ -20,10 +20,16 @@ function [bcs, loads] = generate_fsae_boundary_conditions(nodes, load_case_name,
 %                   .total_mass_kg     - Vehicle mass for inertial loads (default: 230)
 %                   .lateral_g         - Lateral acceleration [G] (default: 1.5)
 %                   .braking_g         - Braking deceleration [G] (default: 1.0)
+%                   .main_hoop_top_nodes - main-hoop top node(s) (rollover)
+%                   .rollover_force_N  - [Fx Fy Fz] at the MH top (default rule 6/5/-9 kN)
+%                   .torsion_fixture   - 'pinned' (default: all rear mounts pinned) or
+%                                        '321' (rigid per-corner hubs, 3-2-1 rear support,
+%                                        front couple at the hubs, #51)
 %
 % Outputs:
-%   bcs   - Bx3 [node_id, dof, value]
-%   loads - Lx3 [node_id, dof, value]
+%   bcs     - Bx3 [node_id, dof, value]
+%   loads   - Lx3 [node_id, dof, value]
+%   fixture - struct: extra_nodes (Kx3, appended after nodes), rigid_links (Rx2)
 %
 % DOF convention: 1=ux, 2=uy, 3=uz, 4=rx, 5=ry, 6=rz
 %
@@ -38,6 +44,7 @@ function [bcs, loads] = generate_fsae_boundary_conditions(nodes, load_case_name,
 %   while allowing the frame to twist naturally.
 
     narginchk(3, 3);
+    fixture = struct('extra_nodes', zeros(0, 3), 'rigid_links', zeros(0, 2));
     
     rear_L = config.rear_lower_nodes(1);
     rear_R = config.rear_lower_nodes(2);
@@ -79,6 +86,28 @@ function [bcs, loads] = generate_fsae_boundary_conditions(nodes, load_case_name,
     
     switch lower(load_case_name)
         case 'torsion'
+            if isfield(config, 'torsion_fixture') && strcmpi(config.torsion_fixture, '321')
+                % Rigid hub per corner (dummy upright/A-arms) tied to its 4 mounts. Rear:
+                % 3-2-1 statically determinate support (RL: x,y,z + pitch; RR: x,z), so
+                % the rear is not artificially stiffened. Front: +-F at the hubs, i.e. a
+                % jig beam with spherical ends; torque = F * hub track exactly.
+                if ~has_rear_susp
+                    error('generate_fsae_boundary_conditions:MissingRearMounts', ...
+                        'torsion_fixture=321 needs rear_susp_left_nodes/right_nodes.');
+                end
+                groups = {front_left_nodes, front_right_nodes, rear_left_nodes, rear_right_nodes};
+                n0 = size(nodes, 1);
+                for h = 1:4
+                    fixture.extra_nodes(h, :) = mean(nodes(groups{h}, :), 1);
+                    g = reshape(groups{h}, [], 1);
+                    fixture.rigid_links = [fixture.rigid_links; repmat(n0 + h, numel(g), 1), g];
+                end
+                hub = n0 + (1:4);  % FL FR RL RR
+                bcs = [hub(3) 1 0; hub(3) 2 0; hub(3) 3 0; hub(3) 5 0; hub(4) 1 0; hub(4) 3 0];
+                arm = abs(fixture.extra_nodes(1, 2) - fixture.extra_nodes(2, 2));
+                loads = [hub(1) 3 torque / arm; hub(2) 3 -torque / arm];
+                return;
+            end
             %% Torsion Test - FSAE Standard Setup
             % Fix all rear suspension mount points (simulate rigid rear axle)
             bcs = [];
@@ -101,8 +130,9 @@ function [bcs, loads] = generate_fsae_boundary_conditions(nodes, load_case_name,
                 end
             end
             
-            % Apply torque as couple force at front nodes
-            arm = abs(nodes(front_left_nodes(1), 2) - nodes(front_right_nodes(1), 2));  % Y-distance between front nodes
+            % Apply torque as couple force at front nodes. Equal forces per node, so the
+            % applied moment is F_couple times the L/R centroid distance (#51).
+            arm = abs(mean(nodes(front_left_nodes, 2)) - mean(nodes(front_right_nodes, 2)));
             
             loads = [];
             if arm > 1e-4
@@ -201,24 +231,20 @@ function [bcs, loads] = generate_fsae_boundary_conditions(nodes, load_case_name,
                 bcs = [bcs; n, 1, 0; n, 2, 0; n, 3, 0];
             end
             
-            % Conservative rollover proxy: 1.5 g lateral plus 1.5 g
-            % downward vertical at the main-hoop/upper-rear nodes.
-            F_roll_total = total_mass * 1.5 * g;
-            if isfield(config, 'rear_upper_nodes')
-                rear_upper_L = config.rear_upper_nodes(1);
-                rear_upper_R = config.rear_upper_nodes(2);
-                F_roll = F_roll_total / 2;
-                loads = [
-                    rear_upper_L, 2, F_roll;   % Lateral
-                    rear_upper_R, 2, F_roll;   % Lateral
-                    rear_upper_L, 3, -F_roll;  % Vertical (down)
-                    rear_upper_R, 3, -F_roll;  % Vertical (down)
-                ];
-            else
-                loads = [
-                    rear_L, 2, F_roll_total;
-                    rear_L, 3, -F_roll_total
-                ];
+            % Rule main-hoop load case at the main-hoop top (#49): FSAE alternative-frame
+            % "Main Hoop" case Fx = 6.0 kN, Fy = 5.0 kN, Fz = -9.0 kN.
+            % TODO(rules): verify magnitudes/directions against the current rulebook.
+            % Frame CS: +X rearward, +Y right, +Z up -> rearward, lateral, downward.
+            if ~isfield(config, 'main_hoop_top_nodes') || isempty(config.main_hoop_top_nodes)
+                error('generate_fsae_boundary_conditions:MissingMainHoopTop', ...
+                    'rollover requires config.main_hoop_top_nodes.');
+            end
+            roll_F = [6000, 5000, -9000];
+            if isfield(config, 'rollover_force_N'), roll_F = config.rollover_force_N; end
+            top = reshape(config.main_hoop_top_nodes, [], 1);
+            loads = [];
+            for d = 1:3
+                loads = [loads; top, repmat([d, roll_F(d) / numel(top)], numel(top), 1)]; %#ok<AGROW>
             end
 
         case 'diff_reaction'

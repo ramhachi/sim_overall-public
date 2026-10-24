@@ -12,10 +12,10 @@ function result = beam_fem_solver_tcp(nodes, elements, bcs, loads, options)
 %
 % Inputs:
 %   nodes    - Nx3 double [x, y, z] in meters
-%   elements - Mx9 double [node_i, node_j, D_outer, t, E, G, rho, shape, joint_factor]
+%   elements - Mx13 double [node_i, node_j, D_outer, t, E, G, rho, shape, jf, kAy, kAz, off_i, off_j] (Mx11 / legacy Mx9 accepted)
 %   bcs      - Bx3 double [node_id, dof, value]
 %   loads    - Lx3 double [node_id, dof, value]
-%   options  - struct (currently unused)
+%   options  - struct, optional .rigid_links Rx2 [node_a, node_b] (rigid bodies, RBE2)
 %
 % Output:
 %   result - struct with fields:
@@ -71,6 +71,9 @@ function result = beam_fem_solver_tcp(nodes, elements, bcs, loads, options)
     request.elements = force2D(elements);
     request.bcs = force2D(bcs);
     request.loads = force2D(loads);
+    if nargin >= 5 && isstruct(options) && isfield(options, 'rigid_links') && ~isempty(options.rigid_links)
+        request.rigid_links = force2D(options.rigid_links);
+    end
 
     % Send request (with newline terminator)
     request_json = jsonencode(request);
@@ -150,6 +153,11 @@ function result = beam_fem_solver_tcp(nodes, elements, bcs, loads, options)
     end
 
     result.U = U;
+    for extra = {'element_forces', 'element_stress_vm', 'stress_max', 'element_buckling_ratio', 'buckling_ratio', 'warnings'}
+        if isfield(response, extra{1})
+            result.(extra{1}) = response.(extra{1});
+        end
+    end
 end
 
 function out_cell = force2D(mat)

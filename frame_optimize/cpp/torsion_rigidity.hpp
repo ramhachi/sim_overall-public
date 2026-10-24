@@ -41,6 +41,8 @@ inline double compute_distributed_couple_torsional_rigidity(const Eigen::MatrixX
     double neg_y = 0.0;
     double pos_uz = 0.0;
     double neg_uz = 0.0;
+    double sum_f = 0.0;
+    double sum_fy = 0.0;
 
     for (const auto& load : loads) {
         if (load.dof != 2 || std::abs(load.value) <= 0.0) {
@@ -49,6 +51,8 @@ inline double compute_distributed_couple_torsional_rigidity(const Eigen::MatrixX
         const double weight = std::abs(load.value);
         const double y = nodes(load.node, 1);
         const double uz = U(6 * load.node + 2);
+        sum_f += load.value;
+        sum_fy += load.value * y;
         if (load.value > 0.0) {
             pos_force += weight;
             pos_y += weight * y;
@@ -74,8 +78,9 @@ inline double compute_distributed_couple_torsional_rigidity(const Eigen::MatrixX
         return 0.0;
     }
 
-    const double effective_force = std::min(pos_force, neg_force);
-    const double torque = effective_force * arm;
+    // Actual applied moment about the x axis through the mid-point of the two load
+    // centroids: sum F_z (y - y_mid) (equals F * arm for a balanced couple, #51).
+    const double torque = std::abs(sum_fy - sum_f * 0.5 * (pos_y + neg_y));
     const double twist_rad = std::abs(pos_uz - neg_uz) / arm;
     const double twist_deg = twist_rad * 180.0 / pi;
     if (twist_deg <= 1e-12) {

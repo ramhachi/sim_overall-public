@@ -155,7 +155,7 @@ function config = buildBenchmarkConfig(geom, suspension_file, diff_config, catal
     config.gamma_below = 8.0;
     config.gamma_hard = 50.0;
     config.compliance_penalty_scale = 1000;
-    config.joint_factor = 0.85;
+    % Joint stiffness: per-element CIDECT jf + rigid end offsets (#48); set config.joint_factor to override jf.
     config.max_cg_z = 0.380;
     config.sparsity_max_total_length_m = 45.0;
     config.sparsity_max_elements = 120;

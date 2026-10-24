@@ -20,6 +20,12 @@ function [best_x, best_fval, exitflag, output, population, scores] = custom_mixe
         initial_guess = [];
     end
     
+    % Optional second objective (e.g. all load cases) applied only to the elites (#51)
+    elite_fcn = [];
+    if isfield(options, 'EliteFitnessFcn')
+        elite_fcn = options.EliteFitnessFcn;
+    end
+
     % Strategy Ratios
     elite_ratio = 0.15;      % Top 15% kept as is
     perturb_ratio = 0.60;    % 60% are "evolved" from elites via local search
@@ -101,6 +107,10 @@ function [best_x, best_fval, exitflag, output, population, scores] = custom_mixe
     best_x = population(best_idx, :);
     
     fprintf('Gen 0 | Best Obj: %.4f\n', best_fval);
+    full_done = false(pop_size, 1);  % row already scored by elite_fcn
+    if ~isempty(elite_fcn)
+        best_fval = inf;  % best is tracked over fully scored individuals only
+    end
     
     % History for output
     history = zeros(max_gen, 1);
@@ -110,6 +120,23 @@ function [best_x, best_fval, exitflag, output, population, scores] = custom_mixe
         new_population = zeros(pop_size, nvars);
         
         [~, sort_idx] = sort(scores);
+        if ~isempty(elite_fcn)
+            todo = sort_idx(1:elite_count);
+            todo = todo(~full_done(todo));
+            if ~isempty(todo)
+                scores(todo) = evaluate_population(population(todo, :), elite_fcn, use_parallel);
+                full_done(todo) = true;
+                evaluation_count = evaluation_count + numel(todo);
+                [~, sort_idx] = sort(scores);
+            end
+            masked = scores;
+            masked(~full_done) = inf;
+            [full_best, i_full] = min(masked);
+            if full_best < best_fval
+                best_fval = full_best;
+                best_x = population(i_full, :);
+            end
+        end
         sorted_pop = population(sort_idx, :);
         elites = sorted_pop(1:elite_count, :);
         
@@ -117,6 +144,8 @@ function [best_x, best_fval, exitflag, output, population, scores] = custom_mixe
         new_population(1:elite_count, :) = elites;
         new_scores = zeros(pop_size, 1);
         new_scores(1:elite_count) = scores(sort_idx(1:elite_count));
+        new_full_done = false(pop_size, 1);
+        new_full_done(1:elite_count) = full_done(sort_idx(1:elite_count));
         
         % --- Tier 2: Local Search (Perturbation) ---
         % Generate candidates first, then evaluate in parallel
@@ -178,9 +207,10 @@ function [best_x, best_fval, exitflag, output, population, scores] = custom_mixe
         
         population = new_population;
         scores = new_scores;
+        full_done = new_full_done;
         
         [current_best_fval, current_best_idx] = min(scores);
-        if current_best_fval < best_fval
+        if isempty(elite_fcn) && current_best_fval < best_fval
             best_fval = current_best_fval;
             best_x = population(current_best_idx, :);
         end

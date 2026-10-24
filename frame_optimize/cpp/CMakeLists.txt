@@ -49,3 +49,7 @@ endif()
 # Install
 install(TARGETS beam_fem_standalone beam_fem_server
         RUNTIME DESTINATION ${CMAKE_SOURCE_DIR}/../bin)
+
+# Closed-form benchmarks (cantilever incl. shear term, tube torsion, ...)
+enable_testing()
+add_test(NAME beam_fem_closed_form COMMAND beam_fem_standalone --selftest)

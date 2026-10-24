@@ -131,6 +131,9 @@ function result = beam_fem_solver_tcp_java(nodes, elements, bcs, loads, options)
     request.elements = force2D(elements);
     request.bcs = force2D(bcs);
     request.loads = force2D(loads);
+    if nargin >= 5 && isstruct(options) && isfield(options, 'rigid_links') && ~isempty(options.rigid_links)
+        request.rigid_links = force2D(options.rigid_links);
+    end
 
     % Send request (JSON + newline)
     request_json = jsonencode(request);
@@ -221,6 +224,11 @@ function result = beam_fem_solver_tcp_java(nodes, elements, bcs, loads, options)
     end
 
     result.U = U;
+    for extra = {'element_forces', 'element_stress_vm', 'stress_max', 'element_buckling_ratio', 'buckling_ratio', 'warnings'}
+        if isfield(response, extra{1})
+            result.(extra{1}) = response.(extra{1});
+        end
+    end
 end
 
 function out_cell = force2D(mat)

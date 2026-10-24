@@ -25,6 +25,7 @@ function result = run_canonical_frame_optimization(varargin)
     addParameter(p, 'StiffnessTargetNmPerDeg', [], @(x) isempty(x) || (isnumeric(x) && isscalar(x) && isfinite(x) && x > 0));
     addParameter(p, 'StiffnessMinNmPerDeg', [], @(x) isempty(x) || (isnumeric(x) && isscalar(x) && isfinite(x) && x > 0));
     addParameter(p, 'LoadCaseEvalMode', 'full', @(x) ischar(x) || isstring(x));
+    addParameter(p, 'FullCaseElites', [], @(x) isempty(x) || islogical(x) || isnumeric(x));
     addParameter(p, 'SuppressObjectiveOutput', false, @(x) islogical(x) || isnumeric(x));
     addParameter(p, 'SolverBackend', 'auto', @(x) ischar(x) || isstring(x));
     addParameter(p, 'FemServerLifecycle', 'managed_once', @(x) ischar(x) || isstring(x));
@@ -66,6 +67,13 @@ function result = run_canonical_frame_optimization(varargin)
         objective_func = @(x) quietFrameObjectiveFunction(x, config, runtime.catalog, runtime.materials, reg_params);
     else
         objective_func = @(x) frameObjectiveFunction(x, [], [], [], config, runtime.catalog, runtime.materials, reg_params);
+    end
+    % #51: with torsion_only inner search, re-score the mixed_ga elites with every load
+    % case each generation (default on for V2) so strength/rollover failures drop out early.
+    if config.full_case_elites && strcmpi(config.load_case_eval_mode, 'torsion_only')
+        elite_config = config;
+        elite_config.load_case_eval_mode = 'full';
+        custom_options.EliteFitnessFcn = @(x) quietFrameObjectiveFunction(x, elite_config, runtime.catalog, runtime.materials, reg_params);
     end
     tic;
     [best_x, best_fval, exitflag, output, population, scores] = ...
@@ -397,7 +405,7 @@ function [config, reg_params] = buildCanonicalConfig(runtime, opts, displayProgr
     elseif displayProgress
         fprintf('   → 目標重量ペナルティ: OFF\n');
     end
-    config.joint_factor = 0.85;
+    % Joint stiffness: per-element CIDECT jf + rigid end offsets (#48); set config.joint_factor to override jf.
     if logical(opts.UseFrameDesignV2)
         config.max_cg_z = 0.550;
         config.sparsity_penalty_scale = 200.0;
@@ -426,6 +434,11 @@ function [config, reg_params] = buildCanonicalConfig(runtime, opts, displayProgr
     config.optimizer_mode = char(string(opts.OptimizerMode));
     config.random_seed = opts.RandomSeed;
     config.load_case_eval_mode = char(string(opts.LoadCaseEvalMode));
+    config.full_case_elites = logical(opts.UseFrameDesignV2);
+    config.torsion_fixture = '321';  % rigid hubs + 3-2-1 rear support (#51)
+    if ~isempty(opts.FullCaseElites)
+        config.full_case_elites = logical(opts.FullCaseElites);
+    end
     [config.solver_backend, config.solver_backend_requested] = resolveSolverBackend(opts.SolverBackend, runtime.frame_root);
     config.fem_server_lifecycle = char(string(opts.FemServerLifecycle));
     config.design_schema_version = 'frame_design/v1';

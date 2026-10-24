@@ -108,6 +108,13 @@ try
            'Area calculation error for square');
     assert(abs(props.Iy_mm4 - I_expected) / I_expected < 0.001, ...
            'Moment of inertia calculation error for square');
+    % Bredt: J = b^3 t (b = D - t) = 22,104 mm^4 for 25.4 x 1.65 (#47)
+    b = D_outer - t_val;
+    assert(abs(props.J_mm4 - b^3*t_val) < 1e-6, 'Square J must be Bredt b^3 t');
+    assert(abs(props.J_mm4 - 22104) < 5, 'Square J 25.4x1.65 must be ~22,104 mm^4');
+    assert(abs(props.Asy_mm2 - A_expected/2) < 1e-9, 'Square shear area must be web area A/2');
+    round_props = computeTubeSectionProperties(25.4, 1.65, 'round');
+    assert(abs(round_props.Asy_mm2 - round_props.A_mm2/2) < 1e-9, 'Round shear area must be A/2');
 
     fprintf('  ✓ PASSED: A=%.2f mm², I=%.1f mm⁴\n', props.A_mm2, props.Iy_mm4);
     passed_tests = passed_tests + 1;

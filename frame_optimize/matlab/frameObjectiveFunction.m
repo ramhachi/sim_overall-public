@@ -131,12 +131,6 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
             elements_fem(i, 8) = 2;
         end
         
-        joint_factor = 1.0;
-        if isfield(config, 'joint_factor')
-            joint_factor = config.joint_factor;
-        end
-        elements_fem(i, 9) = joint_factor;
-        
         % Material restrictions check (F.3.2.1)
         group_name = elements_geom.group_names{group_idx};
         [is_mat_valid, ~] = checkMaterialRestriction(group_name, pipe, mat, reg_params);
@@ -157,6 +151,20 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
         % end
     end
     
+    % Timoshenko shear areas (cols 10-11, #46); the FEM uses Phi = 12EI/(G kA L^2).
+    elements_fem = appendShearAreas(elements_fem);
+
+    % Joint model (#48): per-element CIDECT jf + rigid end offsets (cols 12-13).
+    % config.joint_factor (scalar) overrides jf for welded members; bonded CFRP gets none.
+    bonded = cellfun(@(id) ~isempty(id) && isfield(materials.(id), 'is_composite') ...
+        && materials.(id).is_composite, element_materials);
+    [joint_jf, joint_offsets] = compute_joint_corrections(nodes, elements_fem, bonded);
+    if ~isempty(getConfigField(config, 'joint_factor', []))
+        joint_jf(~bonded) = config.joint_factor;
+    end
+    elements_fem(:, 9) = joint_jf;
+    elements_fem(:, 12:13) = joint_offsets;
+
     % Calculate CG Height for newly assigned frame
     % Also calculate mass components here fully, as elements_fem is completely populated now.
     for i = 1:num_elements
@@ -211,6 +219,19 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
     end
     
     % Use front suspension mounts as load points
+    node_config.front_susp_nodes = susp_nodes_idx;
+    node_config.rear_susp_nodes = rear_susp_idx;
+    if is_v2
+        node_config.main_hoop_top_nodes = v2_meta.main_hoop_top_idx;
+    else
+        on_mh = find(abs(nodes(:, 1) - mh_x) < 1e-6);
+        [~, top] = max(nodes(on_mh, 3));
+        node_config.main_hoop_top_nodes = on_mh(top);
+    end
+    node_config.torsion_fixture = getConfigField(config, 'torsion_fixture', 'pinned');
+    if ~isempty(getConfigField(config, 'load_cases_file', ''))
+        node_config.file_cases = import_frame_load_cases(config.load_cases_file, suspension_file);
+    end
     node_config.front_susp_left_nodes = susp_nodes_idx([1, 3, 5, 7]);
     node_config.front_susp_right_nodes = susp_nodes_idx([2, 4, 6, 8]);
     if is_v2 && isfield(v2_meta, 'diff_mount_idx') && ~isempty(v2_meta.diff_mount_idx)
@@ -240,8 +261,12 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
     if isfield(config, 'load_case_eval_mode') && strcmpi(config.load_case_eval_mode, 'torsion_only')
         evaluate_all_cases = false;
     end
+    frame_links = zeros(0, 2);
+    if isfield(elements_geom, 'rigid_links')
+        frame_links = elements_geom.rigid_links;
+    end
     [fem_result, case_results, case_displacement_penalty, fem_success] = ...
-        solveObjectiveLoadCases(nodes, elements_fem, dynamic_cases, evaluate_all_cases, config);
+        solveObjectiveLoadCases(nodes, elements_fem, dynamic_cases, evaluate_all_cases, config, frame_links);
     if ~fem_success
         obj_val = rejectedDesignObjective(config, 1e8);
         results = fem_result;
@@ -284,6 +309,10 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
         end
     end
     
+    % Strength (#50): yield (von Mises / welded Sy) and Euler buckling over the
+    % strength cases (the torsion case is a stiffness test, not a load).
+    [strength_penalty, strength_report] = strengthPenalty(case_results, element_materials, materials, config);
+
     % 4. Calculate Objective
     W_mass = config.W_mass;
     mass_ref = config.mass_ref;
@@ -304,7 +333,12 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
         provisional = true;
         provisional_reasons{end+1} = 'default cg_ref=0.300';
     end
-    f_cg = current_cg_z / cg_ref;
+    % #51: non-structural lumped masses (engine, driver, battery, ...) as rows
+    % [x y z mass_kg] in config.lumped_masses join the CG term; none are in the repo
+    % data yet, so the default is the frame-only CG (max_cg_z stays frame-only).
+    lumped = getConfigField(config, 'lumped_masses', zeros(0, 4));
+    system_cg_z = (cg_moment_z + sum(lumped(:, 3) .* lumped(:, 4))) / (total_mass_calc + sum(lumped(:, 4)));
+    f_cg = system_cg_z / cg_ref;
 
     % Mass target penalty (exceeding target mass)
     P_mass_target = 0;
@@ -374,7 +408,8 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
         end
         obj_val = W_mass * f_mass + W_cg * f_cg + P_stiff + P_mass_target ...
             + material_penalty + geometry_penalty + cg_penalty + total_excl_penalty ...
-            + sparsity_penalty + compliance_penalty + cheap_penalty + case_displacement_penalty;
+            + sparsity_penalty + compliance_penalty + cheap_penalty + case_displacement_penalty ...
+            + strength_penalty;
     end
     
     % 5. Collect detailed results
@@ -393,6 +428,8 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
     results.geometry_precheck_penalty = cheap_penalty;
     results.geometry_precheck_report = cheap_report;
     results.case_displacement_penalty = case_displacement_penalty;
+    results.strength_penalty = strength_penalty;
+    results.strength_report = strength_report;
     results.load_case_results = case_results;
     results.design_schema_version = design.schema_version;
     results.solver_backend = resolveObjectiveSolverBackend(config);
@@ -408,7 +445,9 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
     results.provisional = provisional;
     results.provisional_reasons = provisional_reasons;
     results.nodes = nodes; % Pass back generated nodes
+    results.elements = elements_fem; % FEM element rows actually solved
     results.cg_z = current_cg_z; % Pass back CG metadata
+    results.system_cg_z = system_cg_z; % incl. config.lumped_masses
 end
 
 function obj_val = rejectedDesignObjective(config, penalty)
@@ -426,12 +465,15 @@ function element_groups = build_element_groups(group_indices, group_names)
     end
 end
 
-function [primary_result, case_results, displacement_penalty, success] = solveObjectiveLoadCases(nodes, elements_fem, load_cases, evaluate_all_cases, config)
+function [primary_result, case_results, displacement_penalty, success] = solveObjectiveLoadCases(nodes, elements_fem, load_cases, evaluate_all_cases, config, frame_links)
     if nargin < 4
         evaluate_all_cases = false;
     end
     if nargin < 5
         config = struct();
+    end
+    if nargin < 6
+        frame_links = zeros(0, 2);
     end
 
     num_cases = 1;
@@ -440,7 +482,8 @@ function [primary_result, case_results, displacement_penalty, success] = solveOb
     end
 
     case_results = struct('name', {}, 'success', {}, 'K_torsion', {}, 'mass', {}, ...
-        'max_translation_m', {}, 'loads', {}, 'bcs', {}, 'error', {});
+        'max_translation_m', {}, 'loads', {}, 'bcs', {}, 'error', {}, 'source', {}, ...
+        'stress_max', {}, 'buckling_ratio', {}, 'element_stress_vm', {}, 'element_buckling_ratio', {});
     displacement_penalty = 0;
     max_allowed = getConfigField(config, 'case_max_displacement_m', 0.025);
     primary_result = struct('mass', NaN, 'K_torsion', NaN, 'success', false);
@@ -448,7 +491,7 @@ function [primary_result, case_results, displacement_penalty, success] = solveOb
 
     for ci = 1:num_cases
         try
-            result = solveFemCase(nodes, elements_fem, load_cases(ci).bcs, load_cases(ci).loads, config);
+            result = solveFemCase(nodes, elements_fem, load_cases(ci), config, frame_links);
         catch ME
             fprintf('   [DEBUG] FEM Solver Exception (%s): %s\n', load_cases(ci).name, ME.message);
             warning('FEM Solver failed for %s: %s', load_cases(ci).name, ME.message);
@@ -471,6 +514,14 @@ function [primary_result, case_results, displacement_penalty, success] = solveOb
         case_results(ci).loads = load_cases(ci).loads;
         case_results(ci).bcs = load_cases(ci).bcs;
         case_results(ci).error = '';
+        case_results(ci).source = '';
+        case_results(ci).stress_max = getConfigField(result, 'stress_max', NaN);
+        case_results(ci).buckling_ratio = getConfigField(result, 'buckling_ratio', NaN);
+        case_results(ci).element_stress_vm = getConfigField(result, 'element_stress_vm', []);
+        case_results(ci).element_buckling_ratio = getConfigField(result, 'element_buckling_ratio', []);
+        if isfield(load_cases, 'source') && ~isempty(load_cases(ci).source)
+            case_results(ci).source = load_cases(ci).source;
+        end
 
         if ci == 1
             primary_result = result;
@@ -487,13 +538,23 @@ function [primary_result, case_results, displacement_penalty, success] = solveOb
     success = true;
 end
 
-function result = solveFemCase(nodes, elements_fem, bcs, loads, config)
+function result = solveFemCase(nodes, elements_fem, load_case, config, frame_links)
+    % Cases may add fixture nodes (appended after the frame nodes) and rigid links.
+    if isfield(load_case, 'extra_nodes') && ~isempty(load_case.extra_nodes)
+        nodes = [nodes; load_case.extra_nodes];
+    end
+    options = struct('rigid_links', frame_links);
+    if isfield(load_case, 'rigid_links') && ~isempty(load_case.rigid_links)
+        options.rigid_links = [frame_links; load_case.rigid_links];
+    end
+    bcs = load_case.bcs;
+    loads = load_case.loads;
     backend = resolveObjectiveSolverBackend(config);
     switch backend
         case 'mex'
-            result = beam_fem_solver(nodes, elements_fem, bcs, loads);
+            result = beam_fem_solver(nodes, elements_fem, bcs, loads, options);
         case 'tcp_java'
-            result = beam_fem_solver_tcp_java(nodes, elements_fem, bcs, loads);
+            result = beam_fem_solver_tcp_java(nodes, elements_fem, bcs, loads, options);
         otherwise
             error('frameObjectiveFunction:UnknownSolverBackend', ...
                 'Unknown solver backend "%s". Use auto/mex/tcp_java.', backend);
@@ -531,6 +592,39 @@ function available = ensureNativeMexOnPath()
     end
     solver_path = which('beam_fem_solver');
     available = ~isempty(solver_path) && contains(solver_path, ['.' mexext]);
+end
+
+function [penalty, report] = strengthPenalty(case_results, element_materials, materials, config)
+    Sy = nan(numel(element_materials), 1);
+    for i = 1:numel(element_materials)
+        if ~isempty(element_materials{i})
+            Sy(i) = materials.(element_materials{i}).Sy_welded_MPa;  % joints are welded/bonded
+        end
+    end
+    gamma_yield = getConfigField(config, 'gamma_yield', 50);
+    gamma_buckling = getConfigField(config, 'gamma_buckling', 50);
+    penalty = 0;
+    report = struct('max_yield_utilization', 0, 'max_buckling_ratio', 0);
+    for c = case_results
+        if strcmp(c.name, 'torsion') || isempty(c.element_stress_vm)
+            continue;
+        end
+        util = c.element_stress_vm(:) ./ Sy;
+        util(isnan(util)) = 0;
+        buck = c.element_buckling_ratio(:);
+        penalty = penalty + gamma_yield * sum(max(0, util - 1).^2) ...
+            + gamma_buckling * sum(max(0, buck - 1).^2);
+        report.max_yield_utilization = max(report.max_yield_utilization, max(util));
+        report.max_buckling_ratio = max(report.max_buckling_ratio, max(buck));
+    end
+end
+
+function elements_fem = appendShearAreas(elements_fem)
+    shapes = {'round', 'square'};
+    for i = 1:size(elements_fem, 1)
+        props = computeTubeSectionProperties(elements_fem(i, 3), elements_fem(i, 4), shapes{elements_fem(i, 8)});
+        elements_fem(i, 10:11) = [props.Asy_mm2, props.Asz_mm2];
+    end
 end
 
 function area = tubeAreaM2(D_outer_m, t_m, shape_code)

@@ -79,7 +79,8 @@ function [pass, penalty, report] = check_frame_geometry_constraints_v2(nodes, me
 
     if isfield(elements_geom, 'connectivity') && ~isempty(elements_geom.connectivity)
         deg = accumarray(elements_geom.connectivity(:), 1, [size(nodes, 1), 1], @sum, 0);
-        excluded = [meta.susp_idx(:); meta.rear_susp_idx(:)];
+        % mounts attach by rigid link (#52); legacy bracket nodes stay unused
+        excluded = [meta.susp_idx(:); meta.rear_susp_idx(:); meta.inner_bracket_idx(:); meta.rear_inner_bracket_idx(:)];
         frame_nodes = setdiff((1:size(nodes, 1))', excluded);
         isolated = frame_nodes(deg(frame_nodes) < 2);
         report.metrics.min_frame_node_degree = min(deg(frame_nodes));

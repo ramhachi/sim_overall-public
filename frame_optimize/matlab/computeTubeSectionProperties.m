@@ -48,8 +48,7 @@ function props = computeTubeSectionProperties(D_outer, t, shape)
             % J = π/32 * (D_outer^4 - D_inner^4) = 2*I for circular section
             J_mm4 = pi/32 * (D_outer^4 - D_inner^4);
 
-            % Shear area (Timoshenko beam theory, κ ≈ 0.5 for thin tubes)
-            % As ≈ A / 2 for circular tubes
+            % Shear area for a thin round tube: kappa = 0.5 (Cowper), As = A/2
             Asy_mm2 = A_mm2 / 2;
             Asz_mm2 = Asy_mm2;
 
@@ -62,14 +61,16 @@ function props = computeTubeSectionProperties(D_outer, t, shape)
             Iy_mm4 = (D_outer^4 - D_inner^4) / 12;
             Iz_mm4 = Iy_mm4;  % Symmetric
 
-            % J for thin-walled square tube (torsion constant)
-            % J ≈ 2*t*(D_outer-t)^2 * (D_outer-t) / (D_outer-0.63*t)
-            % Simplified: J ≈ 2*t*b^3 where b = D_outer - t
+            % Bredt-Batho thin-walled closed section, wall centreline b = D - t:
+            % J = 4*A_m^2*t/s with A_m = b^2, s = 4b  ->  J = b^3*t.
+            % Sharp corners: the catalog has no corner radius r. With r_m = r - t/2,
+            % A_m = b^2 - (4-pi)*r_m^2 and s = 4b - (8-2pi)*r_m (add when r is listed).
             b = D_outer - t;
-            J_mm4 = 2 * t * b^3 / (1 + 0.63 * t / b);
+            J_mm4 = b^3 * t;
 
-            % Shear area (κ ≈ 0.83 for square sections)
-            Asy_mm2 = 0.83 * A_mm2;
+            % Shear area = web area: two webs of centreline height b
+            % (2*b*t = A/2 exactly for a square tube, A = 4*b*t).
+            Asy_mm2 = 2 * b * t;
             Asz_mm2 = Asy_mm2;
 
         otherwise

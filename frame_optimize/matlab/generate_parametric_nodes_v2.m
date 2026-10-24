@@ -175,6 +175,7 @@ function [nodes, fbh_nodes, suspension_mount_nodes, inner_bracket_nodes, X_fh, X
     meta.side_impact_idx = 5:8;
     meta.main_hoop_idx = 9:17;
     meta.main_hoop_brace_attach_idx = 16:17;
+    meta.main_hoop_top_idx = 15;  % [X_mh, 0, mh_top_z] row above (rollover load point)
     meta.brace_trapezoid_idx = 18:21;
     meta.rear_free_idx = 22:25;
     meta.rear_mid_idx = rear_mid_idx;
