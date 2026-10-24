@@ -379,7 +379,12 @@ public:
             if (kc_owns_steer_camber) {
                 camber += eval_quadratic(kc.kinematics.camber_vs_steer, steer_angle);
             }
-            camber += kc.kinematics.roll_camber_gain * axle_roll_angle;
+            // camber_vs_travel already sees the roll-induced +-t/2*phi travel, so the
+            // roll gain is applied only without it (#38). Exporters must define
+            // roll_camber_gain as the residual camber(phi) - camber_vs_travel(travel(phi)).
+            if (is_zero_polynomial(kc.kinematics.camber_vs_travel)) {
+                camber += kc.kinematics.roll_camber_gain * axle_roll_angle;
+            }
 
             for (int i = 0; i < 6; ++i) {
                 camber += kc.compliance.camber_per_load[i] * kc_loads[i];
@@ -972,7 +977,8 @@ private:
     // ======== キャンバー角・トー角計算（ガイド §2.4） ========
     // compute_camber_angle()とcompute_pou_displacement()はテスト用にpublicに移動済み
 
-    /// @brief 各輪のトー角を計算
+public:
+    /// @brief 各輪のトー角を計算（テスト用にpublic）
     /// @param wheel_index 車輪インデックス
     /// @return トー角 [rad] (正: トーイン)
     double compute_toe_angle(
@@ -990,7 +996,10 @@ private:
                 toe = eval_quadratic(kc.kinematics.toe_vs_travel, susp_travel_from_eq);
             }
             toe += eval_quadratic(kc.kinematics.toe_vs_steer, steer_angle);
-            toe += kc.kinematics.roll_steer_gain * axle_roll_angle;
+            // Same residual rule as roll_camber_gain (#38).
+            if (is_zero_polynomial(kc.kinematics.toe_vs_travel)) {
+                toe += kc.kinematics.roll_steer_gain * axle_roll_angle;
+            }
 
             for (int i = 0; i < 6; ++i) {
                 toe += kc.compliance.toe_per_load[i] * kc_loads[i];
@@ -1003,6 +1012,7 @@ private:
         const std::array<double, 6> zero_loads = {0.0, 0.0, static_Fz_[wheel_index], 0.0, 0.0, 0.0};
         return compute_toe_angle(wheel_index, 0.0, 0.0, 0.0, zero_loads);
     }
+private:
 
     double compute_effective_relaxation_length(bool longitudinal, double fz, double tire_temp_c) const {
         const auto& relax = params_.tire.relaxation;
@@ -1254,12 +1264,14 @@ private:
 
             const int kc_iterations = wheel_uses_load_sensitive_kinematics(i) ? 2 : 1;
             for (int kc_iter = 0; kc_iter < kc_iterations; ++kc_iter) {
-                camber = compute_camber_angle(i, effective_susp_travel_from_eq, steer[i], axle_roll_angle, kc_loads);
-                toe = compute_toe_angle(i, effective_susp_travel_from_eq, steer[i], axle_roll_angle, kc_loads);
+                // Kinematics follow the wheel-to-body stroke (state), not the
+                // POU pushrod-length change (#38); springs keep effective_*.
+                camber = compute_camber_angle(i, susp_travel_from_eq, steer[i], axle_roll_angle, kc_loads);
+                toe = compute_toe_angle(i, susp_travel_from_eq, steer[i], axle_roll_angle, kc_loads);
 
                 // POUによるキャンバー変化を保存（デバッグ用: 総キャンバーから静的分を引く）
                 double static_camber_component = params_.suspension.static_camber[i]
-                                               + params_.suspension.camber_gain[i] * effective_susp_travel_from_eq;
+                                               + params_.suspension.camber_gain[i] * susp_travel_from_eq;
                 if (update_cache) {
                     pou_camber_[i] = camber - static_camber_component;
                 }

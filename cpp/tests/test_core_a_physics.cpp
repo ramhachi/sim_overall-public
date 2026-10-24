@@ -83,3 +83,30 @@ TEST(CoreA_Mass, SkidpadLateralAccelUsesTotalMass) {
                          + p.mass.m_unsprung[2] + p.mass.m_unsprung[3];
     EXPECT_NEAR(fy / (s.vx * s.r), m_total, 0.03 * m_total);
 }
+
+// #38: roll gains are residuals; with a travel polynomial present they must not add again.
+TEST(CoreA_KC, RollGainNotDoubleCountedWithTravelPolynomial) {
+    VehicleParams p = VehicleParams::default_fsae();
+    auto& kc = p.suspension.kc_corners[0];
+    kc.valid = true;
+    kc.kinematics.camber_vs_travel = {-0.02, -0.5, 0.0};
+    kc.kinematics.toe_vs_travel = {0.001, 0.05, 0.0};
+    kc.kinematics.roll_camber_gain = 0.8;
+    kc.kinematics.roll_steer_gain = 0.1;
+    Vehicle14DOF_New veh(p);
+    const double phi = 0.02, travel = 0.6 * phi;  // pure roll: travel = t/2 * phi
+    const std::array<double, 6> loads = {0, 0, 0, 0, 0, 0};
+    EXPECT_NEAR(veh.compute_camber_angle(0, travel, 0.0, phi, loads), -0.02 - 0.5 * travel, 1e-12);
+    EXPECT_NEAR(veh.compute_toe_angle(0, travel, 0.0, phi, loads), 0.001 + 0.05 * travel, 1e-12);
+
+    // Pure steer (travel 0, roll 0) still reads the steer polynomial.
+    kc.kinematics.toe_vs_steer = {0.0, 0.1, 0.0};
+    Vehicle14DOF_New veh2(p);
+    EXPECT_NEAR(veh2.compute_toe_angle(0, 0.0, 0.2, 0.0, loads), 0.001 + 0.02, 1e-12);
+
+    // Without a travel polynomial the roll gain is the only roll path and still applies.
+    kc.kinematics.camber_vs_travel = {0.0, 0.0, 0.0};
+    Vehicle14DOF_New veh3(p);
+    const double base = p.suspension.static_camber[0] + p.suspension.camber_gain[0] * travel;
+    EXPECT_NEAR(veh3.compute_camber_angle(0, travel, 0.0, phi, loads), base + 0.8 * phi, 1e-12);
+}
