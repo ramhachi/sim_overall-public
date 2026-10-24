@@ -140,6 +140,7 @@ public:
 
     // ======== 初期化 ========
     void set_initial_velocity(double vx) {
+        apply_aero_static_equilibrium(vx);
         state_.vx = vx;
         for (int i = 0; i < 4; ++i) {
             state_.omega[i] = vx / compute_effective_rolling_radius(static_Fz_[i] + params_.mass.m_unsprung[i] * 9.81);
@@ -852,6 +853,33 @@ private:
         }
     }
     
+    /// Per-corner static equilibrium including aero load at speed vx (#15, init only).
+    /// Linear springs/tyres at the reference point; solves body heave+pitch and unsprung heights
+    /// so that spring and tyre forces carry static + aero loads (no start-up bounce).
+    void apply_aero_static_equilibrium(double vx) {
+        const auto aero = aero_map_.compute_forces(
+            std::abs(vx), params_.aero.nominal_front_ride_height_mm,
+            params_.aero.nominal_rear_ride_height_mm, 0.0, 0.0, false);
+        const double a = params_.mass.a, b = params_.mass.b, L = a + b;
+        const double D = -aero.Fz;  // downforce [N], +down
+        const double dF_axle[2] = {(D * b - aero.My) / (2.0 * L), (D * a + aero.My) / (2.0 * L)};
+        double A[2];
+        for (int ax = 0; ax < 2; ++ax) {
+            double k_eff = 0.0;
+            for (int i = 2 * ax; i < 2 * ax + 2; ++i) {
+                const double mr = motion_ratio_at(i, 0.0);
+                k_eff += 0.5 * params_.suspension.k_spring[i] * mr * mr;
+            }
+            A[ax] = dF_axle[ax] / k_eff + dF_axle[ax] / params_.tire.k_tire;  // spring + tyre stroke
+        }
+        const double theta = (A[1] - A[0]) / L;
+        state_.theta = theta;
+        state_.z = z_equilibrium_ + A[0] + a * theta;
+        for (int i = 0; i < 4; ++i) {
+            state_.z_u[i] = z_u_equilibrium_[i] + dF_axle[i / 2] / params_.tire.k_tire;
+        }
+    }
+
     void compute_equilibrium() {
         const double m = params_.mass.m_sprung;
         const double g = 9.81;

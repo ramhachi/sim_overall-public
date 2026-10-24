@@ -403,3 +403,20 @@ TEST(CoreA_Road, QuarterCarStepResponse) {
     EXPECT_NEAR(all.state().z - z0, -h, 0.02 * h);
     EXPECT_NEAR(all.get_tire_Fz()[0], fz0[0], 0.01 * fz0[0]);
 }
+
+// #15: starting at speed, the per-corner equilibrium already carries the aero load (no bounce).
+TEST(CoreA_Equilibrium, NoStartupBounceAtSpeed) {
+    const VehicleParams p = VehicleParams::default_fsae();
+    Vehicle14DOF_New veh(p);
+    veh.set_initial_velocity(15.0);
+    DriverInput in;
+    in.gear = 3;
+    double vz = 0.0, q = 0.0;
+    for (int k = 0; k < 300; ++k) {
+        veh.step(0.001, in);
+        vz = std::max(vz, std::abs(veh.state().vz));
+        q = std::max(q, std::abs(veh.state().q));
+    }
+    EXPECT_LT(vz, 0.02);  // was 0.048 m/s with the single-value equilibrium (now ~0.009)
+    EXPECT_LT(q, 0.005);  // was 0.023 rad/s (now ~0.001)
+}
