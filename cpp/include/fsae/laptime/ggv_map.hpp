@@ -72,15 +72,9 @@ struct GGVMap {
 
     double ay_limit(double speed) const { return interp1(v, ay_max, speed); }
 
-    double ax_accel(double speed, double ay) const {
-        return interp2(v, r, ax_max, speed, lateral_ratio(speed, ay));
-    }
-    double ax_brake(double speed, double ay) const {
-        return interp2(v, r, ax_min, speed, lateral_ratio(speed, ay));
-    }
-    double lateral_ratio(double speed, double ay) const {
-        return std::clamp(std::abs(ay) / std::max(ay_limit(speed), 1e-6), 0.0, 1.0);
-    }
+    /// r = |ay| / (使用可能 ay 限界) ∈ [0,1] での正味加速/減速度の大きさ
+    double ax_accel(double speed, double r_lat) const { return interp2(v, r, ax_max, speed, r_lat); }
+    double ax_brake(double speed, double r_lat) const { return interp2(v, r, ax_min, speed, r_lat); }
 
     /// 定常旋回に必要なタイヤ舵角の大きさ [rad]（|κ|）
     double steer_angle(double abs_kappa, double speed) const {

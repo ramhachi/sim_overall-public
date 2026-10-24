@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 using namespace fsae;
@@ -76,6 +77,46 @@ TEST(LapPlanner, OpenTrackTerminalSpeedIsBackwardBoundary) {
     EXPECT_GT(free_end.back().v, 20.0);  // no forced slowdown at the finish line
     EXPECT_NEAR(stop_end.back().v, 5.0, 1e-9);
     expect_realizable(stop_end, perf);
+}
+
+// Issue #23: a GGV tabulated from the closed-form friction-ellipse model reproduces the
+// closed-form profile within 2 % (bilinear interpolation, JSON round trip).
+TEST(LapPlanner, SyntheticEllipseGGVReproducesClosedForm) {
+    auto perf = base_perf();
+    const double g = 9.81;
+    auto drag = [&](double v) { return 0.5 * perf.rho * perf.cd_a * v * v / perf.mass; };
+    laptime::GGVMap ggv;
+    ggv.source = "synthetic friction ellipse";
+    for (double v = 0.0; v <= 40.0 + 1e-9; v += 1.0) ggv.v.push_back(v);
+    for (double r = 0.0; r <= 1.0 + 1e-9; r += 0.05) ggv.r.push_back(std::min(r, 1.0));
+    for (double v : ggv.v) {
+        ggv.ay_max.push_back(perf.mu_lat * (perf.mass * g + 0.5 * perf.rho * perf.cl_a * v * v) / perf.mass);
+        std::vector<double> acc, brk;
+        for (double r : ggv.r) {
+            const double e = std::sqrt(std::max(0.0, 1.0 - r * r));
+            acc.push_back(std::max(0.0, perf.max_lon_accel * e - drag(v)));
+            brk.push_back(perf.max_lon_decel * e + drag(v));
+        }
+        ggv.ax_max.push_back(acc);
+        ggv.ax_min.push_back(brk);
+    }
+    const auto loaded = laptime::GGVMap::from_json(ggv.to_json());
+
+    auto track = stadium_track();
+    const auto closed_form = laptime::VelocityProfileGenerator(perf).generate(track);
+    auto ggv_perf = perf;
+    ggv_perf.ggv = std::make_shared<const laptime::GGVMap>(loaded);
+    const auto tabulated = laptime::VelocityProfileGenerator(ggv_perf).generate(track);
+
+    ASSERT_EQ(closed_form.size(), tabulated.size());
+    double worst = 0.0;
+    for (std::size_t i = 0; i < closed_form.size(); ++i) {
+        worst = std::max(worst, std::abs(tabulated[i].v / closed_form[i].v - 1.0));
+    }
+    const double t_cf = laptime::compute_lap_time(closed_form);
+    const double t_ggv = laptime::compute_lap_time(tabulated);
+    EXPECT_LT(worst, 0.02) << "pointwise speed error";
+    EXPECT_NEAR(t_ggv / t_cf, 1.0, 0.02) << "closed-form " << t_cf << " s vs GGV " << t_ggv << " s";
 }
 
 // Issue #26: one explicit margin, applied once to the lateral limit (v ∝ sqrt(m)); legacy

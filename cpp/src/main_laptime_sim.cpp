@@ -198,6 +198,10 @@ struct SimulationConfig {
     // 単一摩擦利用マージン（Issue #26, --friction-margin）
     double friction_margin = laptime::kDefaultFrictionMargin;
 
+    // オフライン GGV（Issue #23, --ggv）。空なら閉形式プランナー。--max-lon-* は GGV 時は上限のみ
+    std::string ggv_file;
+    bool max_lon_explicit = false;
+
     // CSV トラックの周回フラグ（--track-closed / --track-open）。未指定は CSV `# closed=` → 警告付きヒューリスティック
     std::optional<bool> track_closed;
 };
@@ -1176,6 +1180,24 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
             velocity_profile_gains.line_planner,
             1.0);
         result.velocity_profile_uses_planned_line = !perf.curvature_override.empty();
+    }
+
+    if (!config.ggv_file.empty()) {
+        try {
+            perf.ggv = std::make_shared<const laptime::GGVMap>(laptime::GGVMap::load(config.ggv_file));
+        } catch (const std::exception& error) {
+            fail_result(result, "ggv_load_failed", error.what(), 0.0);
+            return result;
+        }
+        perf.lon_limits_are_caps = config.max_lon_explicit;
+        std::cerr << "[planner] GGV path: " << config.ggv_file << " (" << perf.ggv->source
+                  << "), friction_margin=" << perf.friction_margin
+                  << (perf.lon_limits_are_caps ? ", --max-lon-* as caps" : "") << std::endl;
+    } else {
+        std::cerr << "[planner] closed-form path (scalar mu ellipse, max_lon_accel="
+                  << perf.max_lon_accel << ", max_lon_decel=" << perf.max_lon_decel
+                  << ", friction_margin=" << perf.friction_margin
+                  << "); pass --ggv <file> for the 14DOF-derived GGV" << std::endl;
     }
 
     std::vector<laptime::VelocityPoint> velocity_profile;
@@ -3156,8 +3178,9 @@ int main(int argc, char** argv) {
             config.max_lat_accel = std::stod(argv[++i]);
             config.max_lat_accel_explicit = true;
         }
-        else if (arg == "--max-lon-accel" && i + 1 < argc) config.max_lon_accel = std::stod(argv[++i]);
-        else if (arg == "--max-lon-decel" && i + 1 < argc) config.max_lon_decel = std::stod(argv[++i]);
+        else if (arg == "--max-lon-accel" && i + 1 < argc) { config.max_lon_accel = std::stod(argv[++i]); config.max_lon_explicit = true; }
+        else if (arg == "--max-lon-decel" && i + 1 < argc) { config.max_lon_decel = std::stod(argv[++i]); config.max_lon_explicit = true; }
+        else if (arg == "--ggv" && i + 1 < argc) config.ggv_file = argv[++i];
         else if (arg == "--kp-steer" && i + 1 < argc) { config.Kp_steer = std::stod(argv[++i]); config.use_custom_gains = true; }
         else if (arg == "--kd-steer" && i + 1 < argc) { config.Kd_steer = std::stod(argv[++i]); config.use_custom_gains = true; }
         else if (arg == "--ki-steer" && i + 1 < argc) { config.Ki_steer = std::stod(argv[++i]); config.use_custom_gains = true; }

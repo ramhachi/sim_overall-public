@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <optional>
 #include <limits>
+#include <memory>
 
 namespace fsae::laptime {
 
@@ -40,6 +41,11 @@ struct VehiclePerformance {
     double friction_margin = kDefaultFrictionMargin;
     // deprecated（Issue #26）: 旋回速度への追加倍率。既定 1.0、friction_margin を使うこと
     double safety_factor = 1.0;
+
+    // オフライン生成 GGV（Issue #23）。設定時は ay_max / ax_max / ax_min をこの表から引き、
+    // max_lon_accel / max_lon_decel は lon_limits_are_caps=true のときだけ上限として効く。
+    std::shared_ptr<const GGVMap> ggv;
+    bool lon_limits_are_caps = false;
 
     // 物理パラメータ
     bool use_physics_model = true;
@@ -155,7 +161,11 @@ private:
             vp.kappa = curvature_at(track, s);
             double kappa_abs = std::abs(vp.kappa);
 
-            if (kappa_abs > 1e-6) {
+            if (kappa_abs > 1e-6 && perf_.ggv) {
+                vp.v = std::min(perf_.ggv->corner_speed(kappa_abs, perf_.friction_margin, perf_.max_speed)
+                                    * perf_.safety_factor,
+                                perf_.max_speed);
+            } else if (kappa_abs > 1e-6) {
                 double v_limit = perf_.max_speed;
                 if (perf_.use_aero_map || perf_.use_load_sensitive_lateral_limit) {
                     // 空力荷重が速度依存になるため簡易固定点反復で解く
@@ -273,17 +283,7 @@ private:
             auto& curr = profile[i];
             double ds = curr.s - prev.s;
 
-            // 現在の速度での横加速度
-            double ay = prev.v * prev.v * prev.kappa;
-            double ay_max = get_max_lat_accel(prev.v);
-
-            // 摩擦円制約に基づく利用可能な縦加速度
-            double lat_ratio = std::clamp(std::abs(ay) / ay_max, 0.0, 1.0);
-            double ax_avail = perf_.max_lon_accel * std::sqrt(1.0 - lat_ratio * lat_ratio);
-
-            // 空力ドラッグによる損失
-            double drag_accel = get_drag_accel(prev.v);
-            double ax_max = std::max(0.0, ax_avail - drag_accel);
+            const double ax_max = accel_limit(prev.v, prev.v * prev.v * prev.kappa);
 
             // 積分
             double v_accel_sq = prev.v * prev.v + 2.0 * ax_max * ds;
@@ -301,18 +301,7 @@ private:
             auto& next = profile[i + 1];
             double ds = next.s - curr.s;
 
-            // 次の地点での横加速度
-            double ay = next.v * next.v * next.kappa;
-            double ay_max = get_max_lat_accel(next.v);
-
-            // 摩擦円制約に基づく利用可能な減速度
-            double lat_ratio = std::clamp(std::abs(ay) / ay_max, 0.0, 1.0);
-            double ax_avail = perf_.friction_margin * perf_.max_lon_decel
-                            * std::sqrt(1.0 - lat_ratio * lat_ratio);
-
-            // 空力ドラッグによる補助（減速を助ける）
-            double drag_accel = get_drag_accel(next.v);
-            double decel_max = ax_avail + drag_accel;
+            const double decel_max = brake_limit(next.v, next.v * next.v * next.kappa);
 
             // 積分
             double v_brake_sq = next.v * next.v + 2.0 * decel_max * ds;
@@ -338,6 +327,38 @@ private:
                 vp.ax = profile[i-1].ax;
             }
         }
+    }
+
+    // ---- 限界モデル: GGV 表（Issue #23）または閉形式（μ スカラー楕円）フォールバック ----
+
+    /// 使用可能 |ay| 限界 [m/s^2]（friction_margin 適用済み）
+    double lat_limit(double v) const {
+        return perf_.ggv ? perf_.friction_margin * perf_.ggv->ay_limit(v) : get_max_lat_accel(v);
+    }
+
+    double lat_ratio(double v, double ay) const {
+        return std::clamp(std::abs(ay) / std::max(lat_limit(v), 1e-6), 0.0, 1.0);
+    }
+
+    /// 正味の前進加速限界 [m/s^2] ≥ 0（空気抵抗込み）
+    double accel_limit(double v, double ay) const {
+        const double r = lat_ratio(v, ay);
+        if (perf_.ggv) {
+            const double ax = perf_.ggv->ax_accel(v, r);
+            return std::max(0.0, perf_.lon_limits_are_caps ? std::min(ax, perf_.max_lon_accel) : ax);
+        }
+        return std::max(0.0, perf_.max_lon_accel * std::sqrt(1.0 - r * r) - get_drag_accel(v));
+    }
+
+    /// 正味の減速限界の大きさ [m/s^2] ≥ 0（空気抵抗込み、friction_margin 適用）
+    /// ponytail: GGV 経路では margin が空気抵抗分にも掛かる（〜1 %）、ax_min を tire/drag 分離で保存すれば解消
+    double brake_limit(double v, double ay) const {
+        const double r = lat_ratio(v, ay);
+        if (perf_.ggv) {
+            const double d = perf_.friction_margin * perf_.ggv->ax_brake(v, r);
+            return perf_.lon_limits_are_caps ? std::min(d, perf_.max_lon_decel) : d;
+        }
+        return perf_.friction_margin * perf_.max_lon_decel * std::sqrt(1.0 - r * r) + get_drag_accel(v);
     }
 
     /// 速度に応じた使用可能横加速度（空力考慮、friction_margin を 1 回だけ適用）

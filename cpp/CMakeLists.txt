@@ -275,3 +275,24 @@ if(BUILD_TESTS)
     target_link_libraries(test_laptime_planner PRIVATE fsae_core GTest::gtest GTest::gtest_main)
     gtest_discover_tests(test_laptime_planner)
 endif()
+
+# Offline GGV / steady-state table generator (Issues #23, #27).
+# Built with the TMeasy test define so it can fall back to TMeasy (logged, recorded in the
+# JSON "source") when the PINN artifact is missing; PINN is still the default request.
+add_executable(ggv_generator src/main_ggv_generator.cpp)
+target_link_libraries(ggv_generator PRIVATE fsae_core)
+target_compile_definitions(ggv_generator PRIVATE FSAE_TEST_TIRE_MODEL_TYPE="tmeasy")
+if(BUILD_TESTS)
+    # Issue #23: generator → laptime_sim --ggv end-to-end (fast eval, standing-start accel)
+    add_test(NAME ggv_generator_quick
+             COMMAND ggv_generator --quick --tire tmeasy --out ${CMAKE_CURRENT_BINARY_DIR}/ggv_quick.json
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(ggv_generator_quick PROPERTIES FIXTURES_SETUP ggv_quick)
+    add_test(NAME laptime_sim_ggv_accel
+             COMMAND laptime_sim --track acceleration --driver pid --eval-mode fast
+                     --ggv ${CMAKE_CURRENT_BINARY_DIR}/ggv_quick.json --output_json
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(laptime_sim_ggv_accel PROPERTIES
+        FIXTURES_REQUIRED ggv_quick
+        PASS_REGULAR_EXPRESSION "\"lap_completed\":true")
+endif()
