@@ -1,0 +1,9 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/sota/projects/FomulaTMU/sim_overall/build-review/cmake_install.cmake",
+		"/Users/sota/projects/FomulaTMU/sim_overall/build-review/cpp/cmake_install.cmake",
+		"/Users/sota/projects/FomulaTMU/sim_overall/build-review/cpp/tests/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

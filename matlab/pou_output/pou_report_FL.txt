@@ -1,0 +1,50 @@
+================================================================
+ POU Hardpoint Optimization Report
+ Wheel: FL
+ Date: 2026-03-02 11:42:44
+================================================================
+
+--- Optimization Status ---
+Status:    FAILED (exitflag=-2)
+Solve Time: 46.49 s
+
+--- Hardpoint Coordinates (Chassis Frame) ---
+  M-pivot (upright):  [  0.0449,  -0.7668,  -0.0500] m
+  M-pivot (chassis):  [  0.0449,  -0.7668,  -0.0500] m
+  Bellcrank pivot:    [  0.0294,  -0.4500,  -0.1729] m
+
+--- A-Arm Hardpoints (Reference) ---
+  Upper front chassis: [  0.1980,  -0.3826,  -0.3999] m
+  Upper rear chassis:  [ -0.1980,  -0.3826,  -0.3999] m
+  Upper upright:       [  0.0372,  -0.7628,  -0.3840] m
+  Lower front chassis: [  0.1980,  -0.4500,  -0.1529] m
+  Lower rear chassis:  [ -0.1980,  -0.4500,  -0.1529] m
+  Lower upright:       [  0.0500,  -0.7799,  -0.1390] m
+  Tie rod chassis:     [  0.0500,  -0.2000,  -0.1625] m
+  Tie rod upright:     [  0.1500,  -0.8836,  -0.1500] m
+  Kingpin origin:      [  0.0500,  -0.7799,  -0.1390] m
+  Kingpin direction:   [ -0.0522,   0.0697,  -0.9962]
+
+--- Performance Metrics ---
+  Polynomial Fit RMS:   12.81 mm  [FAIL > 2mm]
+  Max Jack Error:       28.62 mm
+  Max Camber Error:     16.86 deg
+  Max Rod-End Angle:     1.87 deg  [PASS < 60 deg]
+  Installation Ratio:   0.063     [PASS 0.05-0.50]
+  Pushrod Length:       0.340 m
+
+--- Packaging Validation ---
+  Status: PASS (all constraints satisfied)
+
+--- Geometry Assumptions ---
+  Rim radius:          0.127 m (5.0 in)
+  Rim clearance min:   5.0 mm
+  Pushrod length min:  0.080 m
+  Pushrod length max:  0.900 m
+  Rod-end angle max:   60.0 deg
+
+================================================================
+ NOTE: A-arm hardpoints are PLACEHOLDER values.
+ Update define_suspension_geometry.m with actual CAD data
+ before using these results for manufacturing.
+================================================================

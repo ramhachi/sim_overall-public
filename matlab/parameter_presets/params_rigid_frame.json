@@ -1,0 +1,5 @@
+{
+  "suspension": {
+    "K_chassis": 1e6
+  }
+}

@@ -1,0 +1,58 @@
+[project]
+name = "fsae-sim"
+version = "0.1.0"
+description = "FSAE Vehicle Dynamics Simulator - Python tools"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "FSAE Team"}
+]
+
+dependencies = [
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "pandas>=2.0.0",
+    "matplotlib>=3.7.0",
+    "plotly>=5.15.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "ruff>=0.0.280",
+    "mypy>=1.4",
+    "hypothesis>=6.0",
+    "tensorboard>=2.13",
+    "tqdm>=4.65",
+]
+rl = [
+    "gymnasium>=0.29",
+    "stable-baselines3>=2.3",
+    "torch>=2.0",
+    "torchvision>=0.15",
+]
+
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fsae_sim*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true

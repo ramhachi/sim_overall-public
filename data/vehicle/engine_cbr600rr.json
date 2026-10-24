@@ -1,0 +1,104 @@
+{
+    "engine": {
+        "model": "Honda CBR600RR (2003-2006)",
+        "displacement_cc": 599,
+        "configuration": "Inline-4",
+        "max_power_kW": 77,
+        "max_power_rpm": 13500,
+        "max_torque_Nm": 63,
+        "max_torque_rpm": 12500,
+        "redline_rpm": 14500,
+        "idle_rpm": 1300,
+        
+        "torque_curve": {
+            "comment": "エンジントルクカーブデータ（実測値ベース）",
+            "rpm_points": [
+                1000,
+                2000,
+                3000,
+                4000,
+                5000,
+                6000,
+                7000,
+                8000,
+                9000,
+                10000,
+                11000,
+                12000,
+                12500,
+                13000,
+                13500,
+                14000,
+                14500
+            ],
+            "torque_Nm": [
+                35,
+                38,
+                40,
+                45,
+                48,
+                52,
+                54,
+                57,
+                60,
+                61,
+                62,
+                62.5,
+                63,
+                62,
+                60,
+                57,
+                55
+            ]
+        }
+    },
+    
+    "transmission": {
+        "type": "6-speed sequential",
+        "primary_reduction": 1.90,
+        "gear_ratios": {
+            "1st": 2.75,
+            "2nd": 2.00,
+            "3rd": 1.63,
+            "4th": 1.43,
+            "5th": 1.30,
+            "6th": 1.21
+        },
+        "final_drive": {
+            "type": "chain",
+            "front_sprocket": 16,
+            "rear_sprocket": 43,
+            "ratio": 2.69,
+            "comment": "FSAE typical setup (可変): 通常2.5-3.5の範囲"
+        }
+    },
+    
+    "fsae_setup": {
+        "comment": "学生フォーミュラ向けセットアップ例",
+        "final_ratio_variants": {
+            "acceleration": {
+                "ratio": 3.50,
+                "description": "加速重視（アクセラレーション種目）",
+                "top_speed_kmh": 110
+            },
+            "endurance": {
+                "ratio": 3.20,
+                "description": "バランス型（エンデュランス種目）",
+                "top_speed_kmh": 120
+            },
+            "autocross": {
+                "ratio": 3.70,
+                "description": "低速トルク重視（オートクロス種目）",
+                "top_speed_kmh": 105
+            }
+        },
+        "recommended_shift_points": {
+            "1st_to_2nd_rpm": 13500,
+            "2nd_to_3rd_rpm": 13500,
+            "3rd_to_4th_rpm": 13500,
+            "4th_to_5th_rpm": 13500,
+            "5th_to_6th_rpm": 13500,
+            "comment": "パワーバンドを維持するためレッドライン手前でシフトアップ"
+        }
+    }
+}

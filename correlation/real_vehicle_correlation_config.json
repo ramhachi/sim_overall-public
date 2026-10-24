@@ -1,0 +1,710 @@
+{
+  "metadata": {
+    "vehicle_id": {
+      "required": true,
+      "value": "",
+      "unit": "",
+      "method": "Team vehicle identifier and revision"
+    },
+    "config_revision": {
+      "required": true,
+      "value": "",
+      "unit": "",
+      "method": "Correlation config revision label"
+    },
+    "measured_by": {
+      "required": true,
+      "value": "",
+      "unit": "",
+      "method": "Owner of this measurement set"
+    }
+  },
+  "mass_and_inertia": {
+    "corner_weights_kg": {
+      "required": true,
+      "value": [null, null, null, null],
+      "unit": "kg",
+      "maps_to": ["mass.m_total", "mass.a", "mass.b"],
+      "method": "Corner scales with driver, ready-to-run fuel, and target tire pressures"
+    },
+    "unsprung_mass_kg": {
+      "required": true,
+      "value": [null, null, null, null],
+      "unit": "kg",
+      "maps_to": ["mass.m_unsprung"],
+      "method": "Corner-level unsprung mass estimate from component weighing"
+    },
+    "cg_height_m": {
+      "required": true,
+      "value": null,
+      "unit": "m",
+      "maps_to": ["mass.h_cg"],
+      "method": "Tilt-table or wheel-lift CG measurement"
+    },
+    "wheelbase_m": {
+      "required": true,
+      "value": null,
+      "unit": "m",
+      "maps_to": ["mass.wheelbase"],
+      "method": "Hub-center to hub-center"
+    },
+    "track_front_m": {
+      "required": true,
+      "value": null,
+      "unit": "m",
+      "maps_to": ["mass.track_f"],
+      "method": "Contact-patch center to center"
+    },
+    "track_rear_m": {
+      "required": true,
+      "value": null,
+      "unit": "m",
+      "maps_to": ["mass.track_r"],
+      "method": "Contact-patch center to center"
+    },
+    "Ixx_kgm2": {
+      "required": true,
+      "value": null,
+      "unit": "kg*m^2",
+      "maps_to": ["mass.Ixx"],
+      "method": "Pendulum or CAD-backed inertia estimate"
+    },
+    "Iyy_kgm2": {
+      "required": true,
+      "value": null,
+      "unit": "kg*m^2",
+      "maps_to": ["mass.Iyy"],
+      "method": "Pitch inertia estimate"
+    },
+    "Izz_kgm2": {
+      "required": true,
+      "value": null,
+      "unit": "kg*m^2",
+      "maps_to": ["mass.Izz"],
+      "method": "Yaw inertia estimate"
+    },
+    "Ixz_kgm2": {
+      "required": false,
+      "value": null,
+      "unit": "kg*m^2",
+      "maps_to": ["mass.Ixz"],
+      "method": "Cross-product inertia estimate"
+    },
+    "wheel_inertia_kgm2": {
+      "required": false,
+      "value": null,
+      "unit": "kg*m^2",
+      "maps_to": ["mass.Iw"],
+      "method": "Wheel/tire spin-down or CAD estimate"
+    }
+  },
+  "suspension_and_chassis": {
+    "spring_rates_Npm": {
+      "required": true,
+      "value": [null, null, null, null],
+      "unit": "N/m",
+      "maps_to": ["suspension.k_spring"],
+      "method": "Spring rig or certified spring data"
+    },
+    "motion_ratio": {
+      "required": true,
+      "value": [null, null, null, null],
+      "unit": "-",
+      "maps_to": ["suspension.motion_ratio"],
+      "method": "Wheel travel / spring travel measurement"
+    },
+    "antiroll_bar_front_Nm_per_rad": {
+      "required": true,
+      "value": null,
+      "unit": "Nm/rad",
+      "maps_to": ["suspension.k_arb_f"],
+      "method": "Rig or arm-rate back-calculation"
+    },
+    "antiroll_bar_rear_Nm_per_rad": {
+      "required": true,
+      "value": null,
+      "unit": "Nm/rad",
+      "maps_to": ["suspension.k_arb_r"],
+      "method": "Rig or arm-rate back-calculation"
+    },
+    "damper_c0_Ns_per_m": {
+      "required": true,
+      "value": null,
+      "unit": "Ns/m",
+      "maps_to": ["suspension.c0"],
+      "method": "Damper dyno equivalent low-speed damping fit"
+    },
+    "bump_stop_gap_m": {
+      "required": true,
+      "value": null,
+      "unit": "m",
+      "maps_to": ["suspension.bump_stop_gap"],
+      "method": "Installed free gap at ride height"
+    },
+    "bump_stop_stiffness_Npm": {
+      "required": true,
+      "value": null,
+      "unit": "N/m",
+      "maps_to": ["suspension.bump_stop_k"],
+      "method": "Bench compression test or supplier curve fit"
+    },
+    "chassis_torsional_stiffness_Nm_per_deg": {
+      "required": true,
+      "value": null,
+      "unit": "Nm/deg",
+      "maps_to": ["suspension.K_chassis"],
+      "method": "Frame torsion rig"
+    },
+    "chassis_torsional_damping_Nms_per_rad": {
+      "required": false,
+      "value": null,
+      "unit": "Nm*s/rad",
+      "maps_to": ["suspension.C_chassis"],
+      "method": "Decay fit from twist response or assumed from rig data"
+    },
+    "chassis_twist_inertia_kgm2": {
+      "required": false,
+      "value": null,
+      "unit": "kg*m^2",
+      "maps_to": ["suspension.I_twist"],
+      "method": "CAD-backed estimate"
+    }
+  },
+  "kinematics_and_compliance": {
+    "static_camber_deg": {
+      "required": true,
+      "value": [null, null, null, null],
+      "unit": "deg",
+      "maps_to": ["suspension.static_camber"],
+      "method": "Setup pad alignment"
+    },
+    "static_toe_deg": {
+      "required": true,
+      "value": [null, null, null, null],
+      "unit": "deg",
+      "maps_to": ["suspension.static_toe"],
+      "method": "Setup pad alignment"
+    },
+    "camber_gain_rad_per_m": {
+      "required": true,
+      "value": [null, null, null, null],
+      "unit": "rad/m",
+      "maps_to": ["suspension.camber_gain"],
+      "method": "K&C rig or geometry sweep"
+    },
+    "caster_deg": {
+      "required": true,
+      "value": [null, null, null, null],
+      "unit": "deg",
+      "maps_to": ["suspension.kc_corners[*].caster"],
+      "method": "K&C rig or hardpoint solve"
+    },
+    "kpi_deg": {
+      "required": true,
+      "value": [null, null, null, null],
+      "unit": "deg",
+      "maps_to": ["suspension.kc_corners[*].kpi"],
+      "method": "K&C rig or hardpoint solve"
+    },
+    "scrub_radius_m": {
+      "required": true,
+      "value": [null, null, null, null],
+      "unit": "m",
+      "maps_to": ["suspension.kc_corners[*].scrub_radius"],
+      "method": "Kingpin projection at setup ride height"
+    },
+    "mechanical_trail_m": {
+      "required": true,
+      "value": [null, null, null, null],
+      "unit": "m",
+      "maps_to": ["suspension.kc_corners[*].mechanical_trail"],
+      "method": "Kingpin trail at setup ride height"
+    },
+    "roll_center_heights_m": {
+      "required": true,
+      "value": {
+        "front": null,
+        "rear": null
+      },
+      "unit": "m",
+      "maps_to": ["suspension.kc_front.roll_center_height", "suspension.kc_rear.roll_center_height"],
+      "method": "K&C rig or geometry solver"
+    },
+    "anti_geometry_pct": {
+      "required": false,
+      "value": {
+        "front_anti_brake": null,
+        "rear_anti_drive": null,
+        "front_anti_lift": null,
+        "rear_anti_rise": null
+      },
+      "unit": "-",
+      "maps_to": [
+        "suspension.kc_front.anti_brake_pct",
+        "suspension.kc_rear.anti_drive_pct",
+        "suspension.kc_front.anti_lift_pct",
+        "suspension.kc_rear.anti_rise_pct"
+      ],
+      "method": "Geometry solver or K&C export"
+    },
+    "toe_per_load": {
+      "required": false,
+      "value": {},
+      "unit": "rad/unit",
+      "maps_to": ["suspension.kc_corners[*].compliance.toe_per_load"],
+      "method": "Compliance rig or MBS export"
+    },
+    "camber_per_load": {
+      "required": false,
+      "value": {},
+      "unit": "rad/unit",
+      "maps_to": ["suspension.kc_corners[*].compliance.camber_per_load"],
+      "method": "Compliance rig or MBS export"
+    },
+    "hardpoints_file": {
+      "required": false,
+      "value": "",
+      "unit": "",
+      "maps_to": ["suspension.kc_corners", "suspension.pou_hardpoints"],
+      "method": "Path to exported hardpoint dataset"
+    }
+  },
+  "tire_package": {
+    "tire_model_id": {
+      "required": true,
+      "value": "",
+      "unit": "",
+      "maps_to": ["tire.model_name"],
+      "method": "Exact tire size and construction"
+    },
+    "loaded_radius_m": {
+      "required": true,
+      "value": null,
+      "unit": "m",
+      "maps_to": ["tire.radius"],
+      "method": "Loaded tire radius at target pressure"
+    },
+    "pressure_hot_kpa": {
+      "required": true,
+      "value": [null, null, null, null],
+      "unit": "kPa",
+      "method": "Post-run hot pressure"
+    },
+    "mu_x_max": {
+      "required": true,
+      "value": null,
+      "unit": "-",
+      "maps_to": ["tire.mu_x_max"],
+      "method": "Longitudinal fit from accel/brake data or tire bench"
+    },
+    "mu_y_max": {
+      "required": true,
+      "value": null,
+      "unit": "-",
+      "maps_to": ["tire.mu_y_max"],
+      "method": "Lateral fit from skidpad/K&C-normalized data"
+    },
+    "Fz_nom_N": {
+      "required": true,
+      "value": null,
+      "unit": "N",
+      "maps_to": ["tire.Fz_nom"],
+      "method": "Reference load used for tire fit"
+    },
+    "relaxation_Lx_m": {
+      "required": true,
+      "value": null,
+      "unit": "m",
+      "maps_to": ["tire.relaxation.Lx_base"],
+      "method": "Fit from launch/brake transient"
+    },
+    "relaxation_Ly_m": {
+      "required": true,
+      "value": null,
+      "unit": "m",
+      "maps_to": ["tire.relaxation.Ly_base"],
+      "method": "Fit from step steer / constant-radius transient"
+    },
+    "Cx_N_per_m": {
+      "required": true,
+      "value": null,
+      "unit": "N/m",
+      "maps_to": ["tire.Cx"],
+      "method": "Slip stiffness proxy fit"
+    },
+    "Cy_N_per_rad": {
+      "required": true,
+      "value": null,
+      "unit": "N/rad",
+      "maps_to": ["tire.Cy"],
+      "method": "Cornering stiffness proxy fit"
+    },
+    "vertical_stiffness_N_per_m": {
+      "required": true,
+      "value": null,
+      "unit": "N/m",
+      "maps_to": ["tire.k_tire"],
+      "method": "Loaded vertical stiffness fit or tire rig"
+    },
+    "vertical_damping_Ns_per_m": {
+      "required": false,
+      "value": null,
+      "unit": "Ns/m",
+      "maps_to": ["tire.c_tire"],
+      "method": "Impact / shaker fit or assumed from tire test data"
+    },
+    "dmu_dFz_per_N": {
+      "required": false,
+      "value": null,
+      "unit": "1/N",
+      "maps_to": ["tire.dmu_dFz"],
+      "method": "Load sensitivity fit"
+    },
+    "pneumatic_trail_m": {
+      "required": false,
+      "value": null,
+      "unit": "m",
+      "maps_to": ["tire.pneumatic_trail"],
+      "method": "SAT proxy fit from steering/yaw data"
+    },
+    "ambient_temperature_c": {
+      "required": true,
+      "value": null,
+      "unit": "degC",
+      "maps_to": ["tire.ambient_temperature_c"],
+      "method": "Test-day ambient"
+    }
+  },
+  "powertrain_and_diff": {
+    "engine_rpm_points_rpm": {
+      "required": true,
+      "value": [],
+      "unit": "rpm",
+      "maps_to": ["powertrain.engine_rpm_points"],
+      "method": "Dyno or validated engine map"
+    },
+    "engine_torque_curve_Nm": {
+      "required": true,
+      "value": [],
+      "unit": "Nm",
+      "maps_to": ["powertrain.engine_torque_curve"],
+      "method": "Dyno torque curve"
+    },
+    "gear_ratios": {
+      "required": true,
+      "value": [],
+      "unit": "-",
+      "maps_to": ["powertrain.gear_ratios"],
+      "method": "Transmission data"
+    },
+    "primary_ratio": {
+      "required": true,
+      "value": null,
+      "unit": "-",
+      "maps_to": ["powertrain.primary_ratio"],
+      "method": "Primary reduction"
+    },
+    "final_ratio": {
+      "required": true,
+      "value": null,
+      "unit": "-",
+      "maps_to": ["powertrain.final_ratio"],
+      "method": "Sprocket ratio"
+    },
+    "driveline_efficiency": {
+      "required": true,
+      "value": null,
+      "unit": "-",
+      "maps_to": ["powertrain.efficiency"],
+      "method": "Dyno or coastdown-informed estimate"
+    },
+    "lsd_preload_Nm": {
+      "required": true,
+      "value": null,
+      "unit": "Nm",
+      "maps_to": ["powertrain.lsd_preload"],
+      "method": "Bench preload measurement"
+    },
+    "lsd_ramp_accel_deg": {
+      "required": true,
+      "value": null,
+      "unit": "deg",
+      "maps_to": ["powertrain.lsd_ramp_accel"],
+      "method": "LSD hardware specification"
+    },
+    "lsd_ramp_decel_deg": {
+      "required": true,
+      "value": null,
+      "unit": "deg",
+      "maps_to": ["powertrain.lsd_ramp_decel"],
+      "method": "LSD hardware specification"
+    },
+    "lsd_effective_radius_m": {
+      "required": false,
+      "value": null,
+      "unit": "m",
+      "maps_to": ["powertrain.lsd_effective_radius"],
+      "method": "Clutch pack geometry"
+    },
+    "lsd_clutch_friction": {
+      "required": false,
+      "value": null,
+      "unit": "-",
+      "maps_to": ["powertrain.lsd_clutch_friction"],
+      "method": "Plate friction estimate or bench fit"
+    },
+    "lsd_num_plates": {
+      "required": false,
+      "value": null,
+      "unit": "-",
+      "maps_to": ["powertrain.lsd_num_plates"],
+      "method": "LSD hardware specification"
+    }
+  },
+  "brake_and_steering": {
+    "brake_balance_front": {
+      "required": true,
+      "value": null,
+      "unit": "-",
+      "maps_to": ["brake.balance"],
+      "method": "Bias bar or pressure ratio measurement"
+    },
+    "brake_max_pressure_Pa": {
+      "required": false,
+      "value": null,
+      "unit": "Pa",
+      "maps_to": ["brake.max_pressure"],
+      "method": "Master-cylinder pressure capability"
+    },
+    "brake_mu_pad": {
+      "required": false,
+      "value": null,
+      "unit": "-",
+      "maps_to": ["brake.mu_pad"],
+      "method": "Pad dyno or supplier data"
+    },
+    "brake_caliper_area_m2": {
+      "required": false,
+      "value": [null, null, null, null],
+      "unit": "m^2",
+      "maps_to": ["brake.caliper_area"],
+      "method": "Caliper piston geometry"
+    },
+    "brake_effective_radius_m": {
+      "required": false,
+      "value": [null, null, null, null],
+      "unit": "m",
+      "maps_to": ["brake.effective_radius"],
+      "method": "Rotor/pad geometry"
+    },
+    "steering_ackermann": {
+      "required": true,
+      "value": null,
+      "unit": "-",
+      "maps_to": ["steering.ackermann"],
+      "method": "Rack sweep or kinematic solve"
+    },
+    "steering_rack_ratio_m_per_rad": {
+      "required": false,
+      "value": null,
+      "unit": "m/rad",
+      "maps_to": ["steering.rack_ratio"],
+      "method": "Rack displacement per steering wheel angle"
+    },
+    "steering_ratio": {
+      "required": true,
+      "value": null,
+      "unit": "-",
+      "maps_to": ["steering.R_steer"],
+      "method": "Steering wheel to tire angle ratio"
+    },
+    "steering_max_angle_rad": {
+      "required": false,
+      "value": null,
+      "unit": "rad",
+      "maps_to": ["steering.max_angle"],
+      "method": "Rack stop or wheel-angle stop"
+    },
+    "steering_stiffness_Nm_per_rad": {
+      "required": true,
+      "value": null,
+      "unit": "Nm/rad",
+      "maps_to": ["steering.stiffness"],
+      "method": "Compliance steer fit"
+    },
+    "steering_friction_Nm": {
+      "required": false,
+      "value": null,
+      "unit": "Nm",
+      "maps_to": ["steering.T_fric"],
+      "method": "Steering rig breakaway torque"
+    },
+    "steering_inertia_kgm2": {
+      "required": false,
+      "value": null,
+      "unit": "kg*m^2",
+      "maps_to": ["steering.I_steer"],
+      "method": "Column/rack inertia estimate"
+    }
+  },
+  "aero": {
+    "CL_A_m2": {
+      "required": true,
+      "value": null,
+      "unit": "m^2",
+      "maps_to": ["aero.CL_A"],
+      "method": "Lap-model proxy or validated aero estimate"
+    },
+    "CD_A_m2": {
+      "required": true,
+      "value": null,
+      "unit": "m^2",
+      "maps_to": ["aero.CD_A"],
+      "method": "Coastdown-informed drag estimate"
+    },
+    "aero_balance_front": {
+      "required": true,
+      "value": null,
+      "unit": "-",
+      "maps_to": ["aero.aero_balance"],
+      "method": "Front/rear aero load split estimate"
+    },
+    "aero_center_height_m": {
+      "required": false,
+      "value": null,
+      "unit": "m",
+      "maps_to": ["aero.h_aero"],
+      "method": "Aero center estimate"
+    },
+    "nominal_front_ride_height_mm": {
+      "required": true,
+      "value": null,
+      "unit": "mm",
+      "maps_to": ["aero.nominal_front_ride_height_mm"],
+      "method": "Ride height in correlated condition"
+    },
+    "nominal_rear_ride_height_mm": {
+      "required": true,
+      "value": null,
+      "unit": "mm",
+      "maps_to": ["aero.nominal_rear_ride_height_mm"],
+      "method": "Ride height in correlated condition"
+    },
+    "reference_speed_mps": {
+      "required": true,
+      "value": null,
+      "unit": "m/s",
+      "maps_to": ["aero.reference_speed"],
+      "method": "Reference speed for aero proxy data"
+    },
+    "reference_density_kg_per_m3": {
+      "required": true,
+      "value": null,
+      "unit": "kg/m^3",
+      "maps_to": ["aero.reference_density", "aero.rho"],
+      "method": "Test-day or normalized density"
+    },
+    "map_mode": {
+      "required": true,
+      "value": "coefficient",
+      "unit": "",
+      "maps_to": ["aero.map_mode"],
+      "method": "Leave as coefficient/direct_load according to current workflow"
+    },
+    "aero_data_source": {
+      "required": true,
+      "value": "",
+      "unit": "",
+      "method": "Document whether values came from sim-optimized map, coastdown fit, or other proxy"
+    }
+  },
+  "track_and_environment": {
+    "air_temperature_c": {
+      "required": true,
+      "value": null,
+      "unit": "degC",
+      "method": "Weather station or DAQ"
+    },
+    "surface_temperature_c": {
+      "required": false,
+      "value": null,
+      "unit": "degC",
+      "method": "Pyrometer or IR"
+    },
+    "surface_mu_reference": {
+      "required": true,
+      "value": "",
+      "unit": "",
+      "method": "Describe grip condition or measured mu estimate"
+    },
+    "waypoint_file": {
+      "required": true,
+      "value": "",
+      "unit": "",
+      "method": "Track centerline used for correlation run"
+    },
+    "banking_map_file": {
+      "required": false,
+      "value": "",
+      "unit": "",
+      "method": "Optional 3D track augmentation"
+    },
+    "grade_map_file": {
+      "required": false,
+      "value": "",
+      "unit": "",
+      "method": "Optional 3D track augmentation"
+    },
+    "roughness_rms_m": {
+      "required": false,
+      "value": null,
+      "unit": "m",
+      "method": "Surface roughness proxy"
+    }
+  },
+  "telemetry_channels": [
+    {"name": "time_s", "required": true, "unit": "s"},
+    {"name": "position_x_m", "required": true, "unit": "m"},
+    {"name": "position_y_m", "required": true, "unit": "m"},
+    {"name": "speed_mps", "required": true, "unit": "m/s"},
+    {"name": "ax_mps2", "required": true, "unit": "m/s^2"},
+    {"name": "ay_mps2", "required": true, "unit": "m/s^2"},
+    {"name": "yaw_rate_radps", "required": true, "unit": "rad/s"},
+    {"name": "steering_wheel_angle_rad", "required": true, "unit": "rad"},
+    {"name": "steering_torque_Nm", "required": false, "unit": "Nm"},
+    {"name": "throttle_cmd", "required": true, "unit": "-"},
+    {"name": "brake_cmd_or_pressure", "required": true, "unit": "- or Pa"},
+    {"name": "wheel_speed_fl_radps", "required": true, "unit": "rad/s"},
+    {"name": "wheel_speed_fr_radps", "required": true, "unit": "rad/s"},
+    {"name": "wheel_speed_rl_radps", "required": true, "unit": "rad/s"},
+    {"name": "wheel_speed_rr_radps", "required": true, "unit": "rad/s"},
+    {"name": "engine_rpm", "required": true, "unit": "rpm"},
+    {"name": "gear", "required": true, "unit": "-"},
+    {"name": "damper_pot_fl_m", "required": false, "unit": "m"},
+    {"name": "damper_pot_fr_m", "required": false, "unit": "m"},
+    {"name": "damper_pot_rl_m", "required": false, "unit": "m"},
+    {"name": "damper_pot_rr_m", "required": false, "unit": "m"},
+    {"name": "ride_height_front_m", "required": false, "unit": "m"},
+    {"name": "ride_height_rear_m", "required": false, "unit": "m"},
+    {"name": "tire_pressure_hot_kpa", "required": false, "unit": "kPa"},
+    {"name": "tire_temperature_c", "required": false, "unit": "degC"}
+  ],
+  "correlation_tests": [
+    {"name": "corner_weights_and_cg", "required": true},
+    {"name": "spring_and_motion_ratio_check", "required": true},
+    {"name": "damper_dyno_front_rear", "required": true},
+    {"name": "bump_stop_characterization", "required": true},
+    {"name": "K_and_C_or_hardpoint_export", "required": true},
+    {"name": "frame_torsion_rig", "required": true},
+    {"name": "powertrain_or_engine_dyno", "required": true},
+    {"name": "brake_system_characterization", "required": true},
+    {"name": "coastdown_drag_check", "required": true},
+    {"name": "75m_acceleration", "required": true},
+    {"name": "skidpad_clockwise", "required": true},
+    {"name": "skidpad_counter_clockwise", "required": true},
+    {"name": "constant_radius_speed_sweep", "required": true},
+    {"name": "step_steer", "required": true},
+    {"name": "straight_line_brake", "required": true},
+    {"name": "autocross_lap_with_telemetry", "required": true}
+  ]
+}

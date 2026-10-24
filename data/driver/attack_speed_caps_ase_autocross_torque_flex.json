@@ -1,0 +1,142 @@
+{
+  "metadata": {
+    "cap_count": 3,
+    "generated_at": "2026-06-05T11:52:10",
+    "max_cap_speed": 30.0,
+    "relaxation_scale": 4.0,
+    "schema": "attack_speed_caps_v2_scaled",
+    "source_summary": "/tmp/attack_grid_search_course_planner_v1/summary.csv",
+    "window_count": 7
+  },
+  "speed_caps": [
+    {
+      "base_speed": 5.890098,
+      "radius": 18.0,
+      "reason": "predicted_margin",
+      "relaxation_scale": 4.0,
+      "s": 91.2371,
+      "source_case": "fast_exit",
+      "source_csv": "/tmp/attack_grid_search_course_planner_v1/fast_exit/laptime.csv",
+      "source_speed": 6.929527,
+      "source_time": 174.99,
+      "speed": 23.560392
+    },
+    {
+      "base_speed": 4.387683,
+      "radius": 18.0,
+      "reason": "heading_margin_conflict",
+      "relaxation_scale": 4.0,
+      "s": 103.532,
+      "source_case": "balanced_low_vx_cost",
+      "source_csv": "/tmp/attack_grid_search_course_planner_v1/balanced_low_vx_cost/laptime.csv",
+      "source_speed": 5.16198,
+      "source_time": 10.851,
+      "speed": 17.550732
+    },
+    {
+      "base_speed": 4.498447,
+      "radius": 18.0,
+      "reason": "predicted_margin",
+      "relaxation_scale": 4.0,
+      "s": 114.249,
+      "source_case": "balanced_floor",
+      "source_csv": "/tmp/attack_grid_search_course_planner_v1/balanced_floor/laptime.csv",
+      "source_speed": 5.29229,
+      "source_time": 11.681,
+      "speed": 17.993788
+    }
+  ],
+  "window_caps": [
+    {
+      "base_speed": 5.191605,
+      "reason": "heading_margin_conflict",
+      "relaxation_scale": 4.0,
+      "s_end": 123.771,
+      "s_start": 90.771,
+      "source_case": "lat066_fast_exit",
+      "source_csv": "/tmp/attack_grid_search_course_planner_v1/lat066_fast_exit/laptime.csv",
+      "source_s": 115.771,
+      "source_speed": 6.10777,
+      "source_time": 11.951,
+      "speed": 20.76642
+    },
+    {
+      "base_speed": 4.498447,
+      "reason": "predicted_margin",
+      "relaxation_scale": 4.0,
+      "s_end": 122.249,
+      "s_start": 89.249,
+      "source_case": "balanced_floor",
+      "source_csv": "/tmp/attack_grid_search_course_planner_v1/balanced_floor/laptime.csv",
+      "source_s": 114.249,
+      "source_speed": 5.29229,
+      "source_time": 11.681,
+      "speed": 17.993788
+    },
+    {
+      "base_speed": 4.498447,
+      "reason": "predicted_margin",
+      "relaxation_scale": 4.0,
+      "s_end": 122.249,
+      "s_start": 89.249,
+      "source_case": "boundary120",
+      "source_csv": "/tmp/attack_grid_search_course_planner_v1/boundary120/laptime.csv",
+      "source_s": 114.249,
+      "source_speed": 5.29229,
+      "source_time": 11.681,
+      "speed": 17.993788
+    },
+    {
+      "base_speed": 4.498447,
+      "reason": "predicted_margin",
+      "relaxation_scale": 4.0,
+      "s_end": 122.249,
+      "s_start": 89.249,
+      "source_case": "boundary100_outward20",
+      "source_csv": "/tmp/attack_grid_search_course_planner_v1/boundary100_outward20/laptime.csv",
+      "source_s": 114.249,
+      "source_speed": 5.29229,
+      "source_time": 11.681,
+      "speed": 17.993788
+    },
+    {
+      "base_speed": 4.387683,
+      "reason": "heading_margin_conflict",
+      "relaxation_scale": 4.0,
+      "s_end": 111.532,
+      "s_start": 78.532,
+      "source_case": "balanced_low_vx_cost",
+      "source_csv": "/tmp/attack_grid_search_course_planner_v1/balanced_low_vx_cost/laptime.csv",
+      "source_s": 103.532,
+      "source_speed": 5.16198,
+      "source_time": 10.851,
+      "speed": 17.550732
+    },
+    {
+      "base_speed": 8.372568,
+      "reason": "heading_margin_conflict",
+      "relaxation_scale": 4.0,
+      "s_end": 102.3133,
+      "s_start": 69.3133,
+      "source_case": "lat074_fast_exit",
+      "source_csv": "/tmp/attack_grid_search_course_planner_v1/lat074_fast_exit/laptime.csv",
+      "source_s": 94.3133,
+      "source_speed": 9.85008,
+      "source_time": 9.25,
+      "speed": 30.0
+    },
+    {
+      "base_speed": 5.890098,
+      "reason": "predicted_margin",
+      "relaxation_scale": 4.0,
+      "s_end": 99.2371,
+      "s_start": 66.2371,
+      "source_case": "fast_exit",
+      "source_csv": "/tmp/attack_grid_search_course_planner_v1/fast_exit/laptime.csv",
+      "source_s": 91.2371,
+      "source_speed": 6.929527,
+      "source_time": 174.99,
+      "speed": 23.560392
+    }
+  ]
+}

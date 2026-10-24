@@ -1,0 +1,2 @@
+time,x,y,z,phi,theta,psi,vx,vy,vz,p,q,r,s,n,d_heading,kappa,steering,throttle,brake,gear,speed,target_speed,speed_error,lateral_error,heading_error_deg,omega_FL,omega_FR,omega_RL,omega_RR,drs_active
+0,8.83704e-08,0.0149997,3.82483e-06,-1.59673e-07,2.69327e-06,1.5708,14.9994,-0.000260889,0.00765869,-0.000473484,0.00527918,-0.000489998,0,-8.83704e-08,-1.6444e-07,-0.10989,0.0943891,0,0.0603597,2,14.9994,13.5692,0,8.83704e-08,-9.42175e-06,0,0,0,0,0

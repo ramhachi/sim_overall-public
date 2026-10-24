@@ -1,0 +1,21 @@
+=== Optimal PID Gains for ASE_autocross Track ===
+Track radius: 0.0 m
+Optimization date: 2026/04/22 22:19:42
+
+# C++ Command Line Arguments:
+--kp-steer 0.109723 --kd-steer 0.153417 --ki-steer 0.024839 \
+--kh-steer 0.715947 --kff-steer 1.069527 \
+--kp-speed 0.800000 --ki-speed 0.020000 \
+--max-throttle 1.0
+
+# Individual Gains:
+Kp_steer  = 0.109723
+Kd_steer  = 0.153417
+Ki_steer  = 0.024839
+Kh_steer  = 0.715947
+Kff_steer = 1.069527
+Kp_speed  = 0.800000
+Ki_speed  = 0.020000
+max_throttle = 1.0 (Fixed)
+
+Best cost: 218000.0000

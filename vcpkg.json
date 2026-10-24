@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "fsae-sim",
+  "version": "0.1.0",
+  "description": "FSAE Vehicle Dynamics Simulator - High-fidelity transient simulation",
+  "builtin-baseline": "67972e92edd181d433927b42d8ab4bfa52ac164a",
+  "dependencies": [
+    "eigen3",
+    "entt",
+    "nlohmann-json",
+    "spdlog",
+    "gtest",
+    "pybind11"
+  ]
+}

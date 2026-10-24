@@ -1,0 +1,10 @@
+{
+    "steering": {
+        "torque_mode": true,
+        "I_steer": 0.05,
+        "R_steer": 4.5,
+        "T_fric": 1.5,
+        "C_steer_torque": 0.5,
+        "T_driver_max": 25.0
+    }
+}

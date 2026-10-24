@@ -1,0 +1,13 @@
+=== Grid Search Results for figure_eight Track ===
+Date: 2026/02/11 00:48:06
+Total iterations: 60
+Elapsed time: 0.3 minutes
+
+Best cost: 172.3689
+RMS Lateral Error: 3.262 m
+RMS Heading Error: 173.41 deg
+
+# Command line arguments:
+--kp-steer 0.800000 --kd-steer 0.500000 --ki-steer 0.050000 \
+--kh-steer 0.300000 --kff-steer 1.000000 \
+--kp-speed 0.300000 --ki-speed 0.050000

@@ -1,0 +1,5 @@
+if(EXISTS "/Users/sota/projects/FomulaTMU/sim_overall/build-review/cpp/tests/fsae_tests[1]_tests.cmake")
+  include("/Users/sota/projects/FomulaTMU/sim_overall/build-review/cpp/tests/fsae_tests[1]_tests.cmake")
+else()
+  add_test(fsae_tests_NOT_BUILT fsae_tests_NOT_BUILT)
+endif()

@@ -1,0 +1,801 @@
+# PINN Tire Model Configuration
+
+# Model Architecture
+model:
+  architecture: multi_head
+  hidden_dims: []
+  input_dim: 5
+  output_dim: 4
+  use_layer_norm: true
+  head_hidden_dims:
+    fx: [128, 128, 64, 64, 32]
+    fy_mz: [128, 128, 64, 64, 32]
+    mx: [64, 64, 32]
+
+# Training Parameters
+training:
+  max_epochs: 260
+  batch_size: 512
+  learning_rate: 0.002
+  weight_decay: 1.0e-5
+  patience: 20
+  val_interval: 5
+  gradient_clip_norm: 1.0
+
+# Data Split
+data:
+  split_strategy: group  # group: run-level holdout, random: point-level interpolation split
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  random_seed: 42
+  sampling_seed: 42
+  max_samples_total: 120000
+
+# Curriculum Learning Schedule
+curriculum:
+  phase_a_end: 50      # Data loss only
+  phase_b_end: 120     # + Zero slip + Symmetry
+  phase_c_end: 200     # + Friction circle + Monotonicity + trend constraints
+  phase_d_end: 260     # Final weights
+
+  # Final physics loss weights (Phase D)
+  final_weights:
+    zero: 10.0      # Most critical
+    sym: 5.0
+    fric: 2.0
+    mono: 1.0       # Least critical
+    fy_sa_zero: 15.0  # SA=0 Fy leakage constraint
+    combined: 0.50    # Combined slip consistency
+    stiffness: 0.05   # Small-slip stiffness load trend
+    high_sa_lateral: 0.10  # High-|SA| |Fy| load monotonicity
+    mz_trail: 0.10    # Mz / pneumatic trail sanity
+    camber: 0.10      # Camber thrust symmetry/cap
+    smoothness: 0.02  # Pure-section curvature smoothness
+
+# Physics Constraints
+physics:
+  # Zero slip constraint
+  zero_slip:
+    force_threshold_n: 2.0   # [N] target at SR=SA=0
+    moment_threshold_nm: 5.0 # [Nm] target at SR=SA=0
+    n_colloc_points: 128  # Per batch
+
+  # Symmetry constraint
+  symmetry:
+    n_colloc_points: 256  # Pairs per batch
+
+  # Friction circle constraint
+  friction_circle:
+    mu_cap: 2.6           # Peak friction + 10% margin
+    n_colloc_points: 128
+
+  # Monotonicity constraint (expensive)
+  monotonicity:
+    enable: true
+    n_colloc_points: 64
+    epsilon: 1.0e-6
+
+  # Combined slip consistency (weak shape prior)
+  combined_slip:
+    n_colloc_points: 128
+    margin: 0.03
+
+  # Fy leakage when SA=0 (independent of SR)
+  fy_sa_zero:
+    force_threshold: 20.0
+    n_colloc_points: 128
+
+  # High-|SA| lateral-force load monotonicity
+  high_sa_lateral_load:
+    min_abs_sa_deg: 6.0
+    drop_margin: 0.01
+    mu_cap: 2.6
+    n_colloc_points: 64
+
+  # Small-slip stiffness load sensitivity (weak trend prior)
+  stiffness_load:
+    n_colloc_points: 64
+    sr_delta: 0.01
+    sa_delta_deg: 0.25
+
+  # Aligning torque / pneumatic trail sanity
+  mz_trail:
+    n_colloc_points: 128
+    small_sa_deg: 1.5
+    large_sa_deg: 6.0
+    min_abs_sa_deg: 1.0
+    max_trail_m: 0.18
+    min_trail_m: 0.0
+    trail_margin_m: 0.01
+    min_lateral_force_n: 75.0
+    sign_loss_weight: 0.5
+    odd_loss_weight: 0.10
+
+  # Camber thrust at zero slip
+  camber_thrust:
+    n_colloc_points: 128
+    camber_mu_cap: 0.25
+
+  # Smooth pure-slip sections. This is a weak shape prior to prefer
+  # sigmoid/Magic-Formula-like curves without forcing exact target points.
+  section_smoothness:
+    n_colloc_points: 128
+    sr_delta: 0.015
+    sa_delta_deg: 0.75
+    mu_cap: 2.6
+    mz_scale_m: 0.06
+    force_deadband: 0.015
+    mz_deadband: 0.030
+    mz_weight: 0.5
+    slope_sign_weight: 0.0
+
+# Data Loss Weights
+data_loss:
+  component_weights:
+    fx: 1.0
+    fy: 1.0
+    mx: 0.5
+    mz: 0.5
+  near_zero_weights:
+    fx:
+      enabled: false
+      sr_abs: 0.03
+      sa_abs: 0.75
+      weight: 1.0
+    fy:
+      enabled: false
+      sa_abs: 1.0
+      sr_abs: 0.03
+      weight: 1.0
+    mz:
+      enabled: false
+      sr_abs: 0.03
+      sa_min_abs: 1.0
+      sa_max_abs: 12.5
+      weight: 1.0
+      low_fz_max: 300
+      low_fz_weight: 1.0
+  local_stiffness_targets:
+    enabled: false
+    loss_weight: 0.0
+    fz_targets: [200, 650, 950, 1150]
+    fz_tolerance: 90.0
+    min_samples: 30
+    sr_delta: 0.005
+    sa_delta_deg: 0.1
+    fx:
+      enabled: true
+      sr_abs: 0.02
+      sa_abs: 0.75
+    fy:
+      enabled: true
+      sa_abs: 1.0
+      sr_abs: 0.03
+  mz_shape_targets:
+    enabled: false
+    loss_weight: 0.0
+    fz_targets: [200, 400, 650, 950, 1150]
+    fz_tolerance: 90.0
+    sr_abs: 0.03
+    ia_abs: 1.0
+    min_samples: 25
+    target_scale_nm: 25.0
+    target_weight: 1.0
+    low_fz_max: 300
+    low_fz_weight: 1.0
+    temperature_bins:
+      - [null, null]
+    temperature_bin_weight: 1.0
+    sa_bins:
+      - [-12.0, -9.0]
+      - [-9.0, -6.0]
+      - [-6.0, -3.0]
+      - [-3.0, -1.0]
+      - [1.0, 3.0]
+      - [3.0, 6.0]
+      - [6.0, 9.0]
+      - [9.0, 12.0]
+
+# TTC Data Paths
+data_paths:
+  drivebrake: "data/tiredata/DriveBrake-Hoosier18.0×6.0-10-R20.csv"
+  cornering: "data/tiredata/Cornering-Hoosier18.0×6.0-10-R20.csv"
+
+# Tire Model Selection (auto-loads from csv/ directory)
+tire_model:
+  # Options: 'Hoosier_18p0X6p0-10_R20_Rim6', 'MRF_18p0X6p0-10', 'Goodyear_18p0X6p5-10',
+  #          'Hoosier_20p5X7p0-13_R20', 'Goodyear_20p0X7p0-13'
+  # Leave as 'auto' to list available models and exit
+  name: "Hoosier_18p0X6p0-10_R20_Rim6"
+
+  # Alternative: filter by manufacturer or size
+  # manufacturer: "Hoosier"  # Hoosier, MRF, Goodyear
+  # size: "18p0X6p0"         # Size pattern to match
+
+# Tire-specific overrides allow different training recipes per tire family.
+tire_profiles:
+  Hoosier_18p0X6p0-10_R20_Rim6:
+    model:
+      architecture: multi_head
+      hidden_dims: []
+      head_hidden_dims:
+        fx: [128, 128, 64, 64, 32]
+        fy_mz: [128, 128, 64, 64, 32]
+        mx: [64, 64, 32]
+    training:
+      max_epochs: 80
+      batch_size: 2048
+      patience: 20
+    data:
+      random_seed: 1
+      max_samples_total: 40000
+      source_component_masks:
+        Db: [1.0, 0.0, 0.0, 0.0]
+        Cr: [0.0, 1.0, 0.0, 1.0]
+    curriculum:
+      final_weights:
+        zero: 0.05
+        sym: 0.10
+        fric: 0.05
+        mono: 1.20
+        fy_sa_zero: 0.15
+        combined: 0.02
+        stiffness: 0.005
+        high_sa_lateral: 0.05
+        mz_trail: 0.01
+        camber: 0.01
+    validation_targets:
+      r2_min: 0.90
+      friction_violation_rate: 0.12
+      monotonicity_empirical_margin: 0.08
+      high_sa_lateral_load_violation_rate: 0.05
+      high_sa_lateral_load_drop_margin: 0.01
+      high_sa_min_abs_sa_deg: 6.0
+      mz_negative_trail_rate: 0.25
+      camber_mu_cap: 0.50
+      camber_min_coverage_per_side: 50
+    hardware:
+      num_workers: 0
+
+  Hoosier_18p0X6p0-10_R20_Rim7:
+    model:
+      architecture: multi_head
+      hidden_dims: []
+      head_hidden_dims:
+        fx: [128, 128, 64, 64, 32]
+        fy_mz: [128, 128, 64, 64, 32]
+        mx: [64, 64, 32]
+    training:
+      max_epochs: 80
+      batch_size: 2048
+      patience: 20
+    data:
+      random_seed: 1
+      max_samples_total: 40000
+      source_component_masks:
+        Db: [1.0, 0.0, 0.0, 0.0]
+        Cr: [0.0, 1.0, 0.0, 1.0]
+    curriculum:
+      final_weights:
+        zero: 0.05
+        sym: 0.10
+        fric: 0.05
+        mono: 1.20
+        fy_sa_zero: 0.15
+        combined: 0.02
+        stiffness: 0.005
+        high_sa_lateral: 0.05
+        mz_trail: 0.01
+        camber: 0.01
+    validation_targets:
+      r2_min: 0.90
+      friction_violation_rate: 0.12
+      monotonicity_empirical_margin: 0.08
+      high_sa_lateral_load_violation_rate: 0.05
+      high_sa_lateral_load_drop_margin: 0.01
+      high_sa_min_abs_sa_deg: 6.0
+      mz_negative_trail_rate: 0.25
+      camber_mu_cap: 0.50
+      camber_min_coverage_per_side: 50
+    hardware:
+      num_workers: 0
+
+  MRF_18p0X6p0-10:
+    training:
+      max_epochs: 100
+      batch_size: 2048
+      patience: 15
+    data:
+      max_samples_total: 120000
+    curriculum:
+      final_weights:
+        zero: 0.05
+        sym: 0.10
+        fric: 0.05
+        mono: 0.30
+        fy_sa_zero: 0.15
+        combined: 0.02
+        stiffness: 0.005
+        high_sa_lateral: 0.05
+        mz_trail: 0.01
+        camber: 0.01
+    hardware:
+      num_workers: 0
+
+  MRF_18p0X6p0-10_ZTD1:
+    training:
+      max_epochs: 80
+      batch_size: 2048
+      patience: 15
+    data:
+      max_samples_total: 60000
+    curriculum:
+      final_weights:
+        zero: 0.05
+        sym: 0.10
+        fric: 0.05
+        mono: 0.30
+        fy_sa_zero: 0.15
+        combined: 0.02
+        stiffness: 0.005
+        high_sa_lateral: 0.05
+        mz_trail: 0.01
+        camber: 0.01
+    hardware:
+      num_workers: 0
+
+  Hoosier_20p5X7p0-13_R20:
+    training:
+      max_epochs: 80
+      batch_size: 2048
+      patience: 15
+    data:
+      max_samples_total: 60000
+    curriculum:
+      final_weights:
+        zero: 0.05
+        sym: 0.10
+        fric: 0.05
+        mono: 0.30
+        fy_sa_zero: 0.15
+        combined: 0.02
+        stiffness: 0.005
+        high_sa_lateral: 0.05
+        mz_trail: 0.01
+        camber: 0.01
+    hardware:
+      num_workers: 0
+
+  Goodyear_18p0X6p5-10_Eagle_Racing_Special:
+    training:
+      max_epochs: 80
+      batch_size: 2048
+      patience: 15
+    data:
+      max_samples_total: 60000
+    curriculum:
+      final_weights:
+        zero: 0.05
+        sym: 0.10
+        fric: 0.05
+        mono: 0.30
+        fy_sa_zero: 0.15
+        combined: 0.02
+        stiffness: 0.005
+        mz_trail: 0.01
+        camber: 0.01
+    hardware:
+      num_workers: 0
+
+  Goodyear_20p0X7p0-13_2704:
+    training:
+      max_epochs: 80
+      batch_size: 2048
+      patience: 15
+    data:
+      max_samples_total: 60000
+    curriculum:
+      final_weights:
+        zero: 0.05
+        sym: 0.10
+        fric: 0.05
+        mono: 0.30
+        fy_sa_zero: 0.15
+        combined: 0.02
+        stiffness: 0.005
+        mz_trail: 0.01
+        camber: 0.01
+    hardware:
+      num_workers: 0
+
+  Hoosier_16p0X6p0-10_R20_C2000:
+    training:
+      max_epochs: 60
+      batch_size: 2048
+      patience: 12
+    data:
+      max_samples_total: 40000
+    hardware:
+      num_workers: 0
+
+  Hoosier_16p0X7p5-10_R20_C2000:
+    training:
+      max_epochs: 60
+      batch_size: 2048
+      patience: 12
+    data:
+      max_samples_total: 40000
+    hardware:
+      num_workers: 0
+
+  Hoosier_16p0X6p0-10_LCO_Rim6:
+    training:
+      max_epochs: 60
+      batch_size: 2048
+      patience: 12
+    data:
+      max_samples_total: 40000
+    hardware:
+      num_workers: 0
+
+  Hoosier_16p0X6p0-10_LCO_Rim7:
+    training:
+      max_epochs: 60
+      batch_size: 2048
+      patience: 12
+    data:
+      max_samples_total: 40000
+    hardware:
+      num_workers: 0
+
+  Hoosier_16p0X6p0-10_R25B_Rim6:
+    training:
+      max_epochs: 60
+      batch_size: 2048
+      patience: 12
+    data:
+      max_samples_total: 40000
+    hardware:
+      num_workers: 0
+
+  Hoosier_16p0X6p0-10_R25B_Rim7:
+    training:
+      max_epochs: 60
+      batch_size: 2048
+      patience: 12
+    data:
+      max_samples_total: 40000
+    hardware:
+      num_workers: 0
+
+  Hoosier_16p0X7p5-10_LCO_Rim7:
+    training:
+      max_epochs: 60
+      batch_size: 2048
+      patience: 12
+    data:
+      max_samples_total: 40000
+    hardware:
+      num_workers: 0
+
+  Hoosier_16p0X7p5-10_LCO_Rim8:
+    training:
+      max_epochs: 60
+      batch_size: 2048
+      patience: 12
+    data:
+      max_samples_total: 40000
+    hardware:
+      num_workers: 0
+
+  Hoosier_16p0X7p5-10_R25B_Rim7:
+    training:
+      max_epochs: 60
+      batch_size: 2048
+      patience: 12
+    data:
+      max_samples_total: 40000
+    hardware:
+      num_workers: 0
+
+  Hoosier_16p0X7p5-10_R25B_Rim8:
+    training:
+      max_epochs: 60
+      batch_size: 2048
+      patience: 12
+    data:
+      max_samples_total: 40000
+    hardware:
+      num_workers: 0
+
+  Hoosier_18p0X6p0-10_LCO_C2000_Rim6:
+    model:
+      architecture: multi_head
+      hidden_dims: []
+      head_hidden_dims:
+        fx: [128, 128, 64, 64, 32]
+        fy_mz: [128, 128, 64, 64, 32]
+        mx: [64, 64, 32]
+    training:
+      max_epochs: 160
+      batch_size: 2048
+      patience: 30
+    data:
+      split_strategy: random
+      max_samples_total: 60000
+      source_component_masks:
+        Db: [1.0, 0.0, 0.0, 0.0]
+        Cr: [0.0, 1.0, 0.0, 1.0]
+    curriculum:
+      final_weights:
+        zero: 0.05
+        sym: 0.10
+        fric: 0.05
+        mono: 0.30
+        fy_sa_zero: 0.15
+        combined: 0.02
+        stiffness: 0.005
+        high_sa_lateral: 0.02
+        mz_trail: 0.01
+        camber: 0.01
+        smoothness: 0.10
+    physics:
+      mz_trail:
+        min_trail_m: 0.0
+        sign_loss_weight: 0.25
+        odd_loss_weight: 0.01
+      section_smoothness:
+        force_deadband: 0.010
+        mz_deadband: 0.020
+        mz_weight: 0.6
+        slope_sign_weight: 0.10
+    data_loss:
+      component_weights:
+        fx: 1.0
+        fy: 1.0
+        mx: 0.5
+        mz: 1.0
+      near_zero_weights:
+        fx:
+          enabled: false
+          sr_abs: 0.03
+          sa_abs: 0.75
+          weight: 1.0
+        fy:
+          enabled: false
+          sa_abs: 1.0
+          sr_abs: 0.03
+          weight: 1.0
+        mz:
+          enabled: false
+          sr_abs: 0.03
+          sa_min_abs: 1.0
+          sa_max_abs: 12.5
+          weight: 1.0
+          low_fz_max: 500
+          low_fz_weight: 1.0
+      local_stiffness_targets:
+        enabled: true
+        loss_weight: 0.06
+      mz_shape_targets:
+        enabled: false
+        loss_weight: 0.0
+        fz_targets: [200, 400, 650, 950, 1150]
+        min_samples: 20
+        target_scale_nm: 25.0
+        low_fz_max: 500
+        low_fz_weight: 2.0
+        temperature_bins:
+          - [null, null]
+          - [50.0, null]
+        temperature_bin_weight: 1.3
+    validation_targets:
+      r2_min: 0.90
+      friction_violation_rate: 0.12
+      monotonicity_empirical_margin: 0.08
+      high_sa_lateral_load_violation_rate: 0.05
+      high_sa_lateral_load_drop_margin: 0.01
+      high_sa_min_abs_sa_deg: 6.0
+      mz_negative_trail_rate: 0.20
+      camber_mu_cap: 0.50
+      camber_min_coverage_per_side: 50
+    hardware:
+      num_workers: 0
+
+  Hoosier_18p0X6p0-10_LCO_C2000_Rim7:
+    model:
+      architecture: multi_head
+      hidden_dims: []
+      head_hidden_dims:
+        fx: [128, 128, 64, 64, 32]
+        fy_mz: [128, 128, 64, 64, 32]
+        mx: [64, 64, 32]
+    training:
+      max_epochs: 160
+      batch_size: 2048
+      patience: 30
+    data:
+      split_strategy: random
+      max_samples_total: 60000
+      source_component_masks:
+        Db: [1.0, 0.0, 0.0, 0.0]
+        Cr: [0.0, 1.0, 0.0, 1.0]
+    curriculum:
+      final_weights:
+        zero: 0.05
+        sym: 0.10
+        fric: 0.05
+        mono: 0.30
+        fy_sa_zero: 0.15
+        combined: 0.02
+        stiffness: 0.005
+        high_sa_lateral: 0.02
+        mz_trail: 0.50
+        camber: 0.01
+        smoothness: 0.10
+    physics:
+      mz_trail:
+        min_trail_m: 0.005
+        sign_loss_weight: 5.0
+        odd_loss_weight: 0.05
+      section_smoothness:
+        force_deadband: 0.010
+        mz_deadband: 0.020
+        mz_weight: 0.6
+        slope_sign_weight: 0.10
+    data_loss:
+      component_weights:
+        fx: 1.0
+        fy: 1.0
+        mx: 0.5
+        mz: 1.0
+      near_zero_weights:
+        fx:
+          enabled: false
+          sr_abs: 0.03
+          sa_abs: 0.75
+          weight: 1.0
+        fy:
+          enabled: false
+          sa_abs: 1.0
+          sr_abs: 0.03
+          weight: 1.0
+        mz:
+          enabled: false
+          sr_abs: 0.03
+          sa_min_abs: 1.0
+          sa_max_abs: 12.5
+          weight: 1.0
+          low_fz_max: 500
+          low_fz_weight: 1.0
+      local_stiffness_targets:
+        enabled: true
+        loss_weight: 0.06
+      mz_shape_targets:
+        enabled: false
+        loss_weight: 0.0
+        fz_targets: [200, 400, 650, 950, 1150]
+        min_samples: 20
+        target_scale_nm: 25.0
+        low_fz_max: 500
+        low_fz_weight: 2.0
+        temperature_bins:
+          - [null, null]
+          - [50.0, null]
+        temperature_bin_weight: 1.3
+    validation_targets:
+      r2_min: 0.90
+      friction_violation_rate: 0.12
+      monotonicity_empirical_margin: 0.08
+      high_sa_lateral_load_violation_rate: 0.05
+      high_sa_lateral_load_drop_margin: 0.01
+      high_sa_min_abs_sa_deg: 6.0
+      mz_negative_trail_rate: 0.20
+      camber_mu_cap: 0.50
+      camber_min_coverage_per_side: 50
+    hardware:
+      num_workers: 0
+
+  Hoosier_18p0X6p0-10_R25B_Rim6:
+    training:
+      max_epochs: 80
+      batch_size: 2048
+      patience: 15
+    data:
+      max_samples_total: 60000
+    hardware:
+      num_workers: 0
+
+  Hoosier_18p0X6p0-10_R25B_Rim7:
+    training:
+      max_epochs: 80
+      batch_size: 2048
+      patience: 15
+    data:
+      max_samples_total: 60000
+    hardware:
+      num_workers: 0
+
+  Hoosier_18p0X7p5-10_R25B_Rim7:
+    training:
+      max_epochs: 80
+      batch_size: 2048
+      patience: 15
+    data:
+      max_samples_total: 60000
+    hardware:
+      num_workers: 0
+
+  Hoosier_18p0X7p5-10_R25B_Rim8:
+    training:
+      max_epochs: 80
+      batch_size: 2048
+      patience: 15
+    data:
+      max_samples_total: 60000
+    hardware:
+      num_workers: 0
+
+# Input Ranges (physical units — must match TTC raw data units!)
+# TTC data: SA in degrees, IA in degrees, TSTC in °C
+input_ranges:
+  sr: [-0.5, 0.5]       # slip ratio (dimensionless)
+  sa: [-13.0, 13.0]     # degrees (TTC raw)
+  fz: [100, 2000]       # N
+  ia: [-5.0, 5.0]       # degrees (TTC raw)
+  tstc: [25.0, 90.0]    # °C (TTC raw)
+
+# Output Directory
+output:
+  dir: "output/pinn"
+  checkpoint_dir: "output/pinn/checkpoints"
+  tensorboard_dir: "output/pinn/tensorboard"
+  runtime_root: "output/tire_models"
+
+# Runtime post-processing mirrors the C++ deployment path.
+runtime_postprocess:
+  enabled: true
+  friction_cap_mu: 2.6
+  zero_slip_sr_scale: 0.03
+  zero_slip_sa_scale_deg: 0.5
+  symmetry_sr_scale: 0.05
+  symmetry_ia_scale_deg: 0.75
+  sa_zero_fy_scale_deg: 0.3
+  epsilon: 1.0e-9
+
+# Hardware
+hardware:
+  device: "auto"  # auto, cuda, mps, or cpu
+  num_workers: 0
+  pin_memory: true
+
+# Validation Targets (for pass/fail criteria)
+validation_targets:
+  r2_min: 0.90                   # user-approved minimum for deployable Fx/Fy accuracy
+  mz_r2_min: 0.80                # Mz is used by the vehicle steering SAT path
+  zero_slip_max_force_n: 20.0    # N
+  zero_slip_max_moment_nm: 50.0  # Nm
+  friction_violation_rate: 0.05  # synthetic probe
+  measured_friction_violation_rate: 0.15  # measured holdout distribution
+  measured_friction_mu_cap: 2.6
+  measured_combined_slip_violation_rate: 0.35
+  symmetry_mean_max_error: 0.25  # mean normalized antisymmetry
+  symmetry_p95_max_error: 0.45   # robust tail metric (p95)
+  monotonicity_violation_rate: 0.10
+  monotonicity_negative_gradient_tolerance: 0.10
+  monotonicity_empirical_margin: 0.00
+  combined_slip_violation_rate: 0.35
+  combined_slip_margin: 0.05
+  stiffness_load_violation_rate: 0.50
+  stiffness_load_drop_margin: 0.03
+  high_sa_lateral_load_violation_rate: 0.05
+  high_sa_lateral_load_drop_margin: 0.01
+  high_sa_min_abs_sa_deg: 6.0
+  mz_negative_trail_rate: 0.20
+  mz_trail_cap_rate: 0.25
+  mz_trail_growth_rate: 0.65
+  mz_max_trail_m: 0.18
+  camber_mean_asymmetry: 0.50
+  camber_cap_violation_rate: 0.15
+  camber_mu_cap: 0.25

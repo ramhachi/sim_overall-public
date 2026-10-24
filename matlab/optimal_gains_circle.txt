@@ -1,0 +1,21 @@
+=== Optimal PID Gains for circle Track ===
+Track radius: 30.0 m
+Optimization date: 2026/02/16 20:25:36
+
+# C++ Command Line Arguments:
+--kp-steer 0.803042 --kd-steer 0.884699 --ki-steer 0.169528 \
+--kh-steer 1.358699 --kff-steer 1.231293 \
+--kp-speed 0.349866 --ki-speed 0.098670 \
+--max-throttle 1.0
+
+# Individual Gains:
+Kp_steer  = 0.803042
+Kd_steer  = 0.884699
+Ki_steer  = 0.169528
+Kh_steer  = 1.358699
+Kff_steer = 1.231293
+Kp_speed  = 0.349866
+Ki_speed  = 0.098670
+max_throttle = 1.0 (Fixed)
+
+Best cost: 5034.7780

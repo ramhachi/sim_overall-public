@@ -1,0 +1,10 @@
+{
+  "generated_at": "2026-04-18 14:32:24",
+  "source_agent_path": "/Users/sota/projects/FomulaTMU/sim_overall/rl_results/curriculum_torque_frame_fresh_v1/phase2o_circle_preview_always_on/Agent19.mat",
+  "source_variable": "saved_agent",
+  "deployment_agent_path": "/Users/sota/projects/FomulaTMU/sim_overall/rl_results/deployment/deployment_agent.mat",
+  "actor_export_dir": "/Users/sota/projects/FomulaTMU/sim_overall/matlab/rl_driver/rl_actor_export",
+  "vehicle_params": {},
+  "published_reason": "safe_fallback_before_phase34_recovery",
+  "published_by": "resumePhase34RecoveryAfterRestart"
+}

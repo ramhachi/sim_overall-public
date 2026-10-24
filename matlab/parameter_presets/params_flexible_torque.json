@@ -1,0 +1,15 @@
+{
+    "suspension": {
+        "K_chassis": 2000.0,
+        "C_chassis": 5.0,
+        "I_twist": 1.5
+    },
+    "steering": {
+        "torque_mode": true,
+        "I_steer": 0.02,
+        "R_steer": 4.5,
+        "T_fric": 0.3,
+        "C_steer_torque": 0.3,
+        "T_driver_max": 25.0
+    }
+}

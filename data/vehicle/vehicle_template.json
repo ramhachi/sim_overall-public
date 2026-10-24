@@ -1,0 +1,99 @@
+{
+    "name": "FSAE Vehicle 2026",
+    "version": "1.0",
+    "mass": {
+        "total_kg": 280,
+        "sprung_kg": 240,
+        "unsprung_front_kg": 12,
+        "unsprung_rear_kg": 14,
+        "driver_kg": 75
+    },
+    "geometry": {
+        "wheelbase_m": 1.55,
+        "track_front_m": 1.20,
+        "track_rear_m": 1.18,
+        "cg_height_m": 0.28,
+        "front_weight_distribution": 0.47
+    },
+    "inertia": {
+        "Ixx_kgm2": 32,
+        "Iyy_kgm2": 95,
+        "Izz_kgm2": 85,
+        "Ixz_kgm2": -3
+    },
+    "suspension": {
+        "front": {
+            "spring_rate_Npm": 30000,
+            "motion_ratio": 0.85,
+            "roll_center_height_m": 0.035,
+            "camber_gain_degpm": -25,
+            "bump_steer_degpm": 0.5
+        },
+        "rear": {
+            "spring_rate_Npm": 35000,
+            "motion_ratio": 0.90,
+            "roll_center_height_m": 0.045,
+            "camber_gain_degpm": -20,
+            "bump_steer_degpm": -0.2
+        }
+    },
+    "damper": {
+        "c_bump_Nspm": 1500,
+        "c_rebound_Nspm": 2500,
+        "bouc_wen": {
+            "alpha": 5000,
+            "beta": 500,
+            "gamma": 100,
+            "n": 2
+        }
+    },
+    "tire": {
+        "model": "Hoosier 18x6-10 LC0",
+        "radius_m": 0.228,
+        "tmeasy": {
+            "mu_x_max": 1.6,
+            "mu_y_max": 1.8,
+            "Fz_nom_N": 1500,
+            "Lx_m": 0.15,
+            "Ly_m": 0.25
+        },
+        "thermal": {
+            "T_opt_C": 75,
+            "T_width_C": 20
+        }
+    },
+    "aero": {
+        "CL_A_m2": 2.8,
+        "CD_A_m2": 0.95,
+        "aero_balance_front": 0.45,
+        "reference_area_m2": 1.0
+    },
+    "powertrain": {
+        "engine": "Honda CBR600RR",
+        "max_power_kW": 60,
+        "max_torque_Nm": 55,
+        "redline_rpm": 14500,
+        "gear_ratios": [
+            2.75,
+            2.00,
+            1.63,
+            1.43,
+            1.30,
+            1.21
+        ],
+        "final_drive": 3.5,
+        "efficiency": 0.90
+    },
+    "lsd": {
+        "type": "Salisbury",
+        "ramp_acc_deg": 35,
+        "ramp_dec_deg": 50,
+        "preload_Nm": 40
+    },
+    "brake": {
+        "front_master_dia_inch": 0.625,
+        "rear_master_dia_inch": 0.750,
+        "balance_bar_ratio": 0.55,
+        "pad_mu": 0.45
+    }
+}

@@ -1,0 +1,50 @@
+{
+  "schema_version": "vehicle_artifact/v1",
+  "generated_by": {
+    "tool": "frame_optimize/tests",
+    "source_of_truth": "params.suspension.kc.corners.*.hardpoints in the vehicle artifact"
+  },
+  "params": {
+    "frame": {
+      "diff_mount_points": [
+        [1.72, -0.12, 0.22],
+        [1.72, 0.12, 0.22],
+        [1.88, -0.12, 0.24],
+        [1.88, 0.12, 0.24]
+      ],
+      "diff_envelope": {
+        "name": "test differential envelope",
+        "min": [1.64, -0.18, 0.10],
+        "max": [1.96, 0.18, 0.38]
+      }
+    },
+    "suspension": {
+      "kc": {
+        "corners": {
+          "FL": {
+            "hardpoints": {
+              "upper_arm_chassis_fore": [0.198, -0.38255924576310391, -0.39994933877570027],
+              "upper_arm_chassis_aft": [-0.198, -0.38255924576310391, -0.39994933877570027],
+              "lower_arm_chassis_fore": [0.198, -0.45, -0.15285419490886382],
+              "lower_arm_chassis_aft": [-0.198, -0.45, -0.15285419490886382],
+              "upper_ball_joint": [0.037161066575706989, -0.762805704686842, -0.38397863576691582],
+              "lower_ball_joint": [0.05, -0.77993655945115592, -0.13899684745626306],
+              "wheel_center": [0.0, -0.83363477002085085, -0.228]
+            }
+          },
+          "RL": {
+            "hardpoints": {
+              "upper_arm_chassis_fore": [0.198, -0.43804671962668168, -0.20349882402863126],
+              "upper_arm_chassis_aft": [-0.198, -0.43804671962668168, -0.20349882402863126],
+              "lower_arm_chassis_fore": [0.198, -0.30038054356572075, -0.14238192989372553],
+              "lower_arm_chassis_aft": [-0.198, -0.30038054356572075, -0.14238192989372553],
+              "upper_ball_joint": [-0.043188082509228724, -0.78285480155204146, -0.26010061584383537],
+              "lower_ball_joint": [-0.043165903966139924, -0.78546381965994172, -0.15980735469271345],
+              "wheel_center": [0.0, -0.838426534681729, -0.228]
+            }
+          }
+        }
+      }
+    }
+  }
+}

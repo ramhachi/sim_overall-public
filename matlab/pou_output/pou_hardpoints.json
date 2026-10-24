@@ -1,0 +1,46 @@
+{
+  "pou_hardpoints":{
+  "FL":{
+  "M_pivot_chassis":[0.044943,-0.766828,-0.05],
+  "M_pivot_upright":[0.044943,-0.766828,-0.05],
+  "bellcrank_pivot":[0.029424,-0.45,-0.172854],
+  "pushrod_length_m":0.3402,
+  "installation_ratio":0.0634,
+  "max_rod_angle_deg":1.87,
+  "polynomial_error_mm":12.807,
+  "packaging_valid":true,
+  "exitflag":-2,
+  "upper_arm_front_chassis":[0.198,-0.382559,-0.399949],
+  "upper_arm_rear_chassis":[-0.198,-0.382559,-0.399949],
+  "upper_arm_upright":[0.037161,-0.762806,-0.383979],
+  "lower_arm_front_chassis":[0.198,-0.45,-0.152854],
+  "lower_arm_rear_chassis":[-0.198,-0.45,-0.152854],
+  "lower_arm_upright":[0.05,-0.779937,-0.138997],
+  "tie_rod_chassis":[0.05,-0.2,-0.1625],
+  "tie_rod_upright":[0.15,-0.883635,-0.15],
+  "kingpin_origin":[0.05,-0.779937,-0.138997],
+  "kingpin_direction":[-0.052209,0.069662,-0.996204]
+},
+  "FR":{
+  "M_pivot_chassis":[0.044943,0.766828,-0.05],
+  "M_pivot_upright":[0.044943,0.766828,-0.05],
+  "bellcrank_pivot":[0.029424,0.45,-0.172854],
+  "pushrod_length_m":0.3402,
+  "installation_ratio":0.0634,
+  "max_rod_angle_deg":1.87,
+  "polynomial_error_mm":12.807,
+  "packaging_valid":true,
+  "exitflag":1,
+  "upper_arm_front_chassis":[0.198,0.382559,-0.399949],
+  "upper_arm_rear_chassis":[-0.198,0.382559,-0.399949],
+  "upper_arm_upright":[0.037161,0.762806,-0.383979],
+  "lower_arm_front_chassis":[0.198,0.45,-0.152854],
+  "lower_arm_rear_chassis":[-0.198,0.45,-0.152854],
+  "lower_arm_upright":[0.05,0.779937,-0.138997],
+  "tie_rod_chassis":[0.05,0.2,-0.1625],
+  "tie_rod_upright":[0.15,0.883635,-0.15],
+  "kingpin_origin":[0.05,0.779937,-0.138997],
+  "kingpin_direction":[-0.052209,-0.069662,-0.996204]
+}
+}
+}

@@ -1,0 +1,13 @@
+=== Grid Search Results for straight_corner Track ===
+Date: 2026/02/14 12:38:29
+Total iterations: 60
+Elapsed time: 0.6 minutes
+
+Best cost: 0.7833
+RMS Lateral Error: 0.007 m
+RMS Heading Error: 1.07 deg
+
+# Command line arguments:
+--kp-steer 1.200000 --kd-steer 0.500000 --ki-steer 0.050000 \
+--kh-steer 0.300000 --kff-steer 1.000000 \
+--kp-speed 0.300000 --ki-speed 0.050000

@@ -1,0 +1,40 @@
+file(REMOVE_RECURSE
+  "CMakeFiles/fsae_tests.dir/test_bicycle_model.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_bicycle_model.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_bouc_wen.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_bouc_wen.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_drs_system.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_drs_system.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_frame_flexibility.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_frame_flexibility.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_magic_formula.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_magic_formula.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_main.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_main.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_mpc.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_mpc.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_osqp_interface.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_osqp_interface.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_phase5_features.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_phase5_features.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_pou.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_pou.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_rotation.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_rotation.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_spline.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_spline.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_steering_torque.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_steering_torque.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_tmeasy.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_tmeasy.cpp.o.d"
+  "CMakeFiles/fsae_tests.dir/test_vec3.cpp.o"
+  "CMakeFiles/fsae_tests.dir/test_vec3.cpp.o.d"
+  "fsae_tests"
+  "fsae_tests.pdb"
+  "fsae_tests[1]_tests.cmake"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang CXX)
+  include(CMakeFiles/fsae_tests.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

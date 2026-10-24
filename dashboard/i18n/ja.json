@@ -1,0 +1,150 @@
+{
+  "app_title": "FSAE 車両シミュレーション ダッシュボード",
+  "nav": {
+    "home": "ホーム",
+    "engine": "エンジン特性",
+    "vehicle": "車両パラメータ",
+    "simulation": "シミュレーション",
+    "regulation": "レギュレーション確認",
+    "tire": "タイヤモデル",
+    "export": "エクスポート",
+    "settings": "設定"
+  },
+  "home": {
+    "title": "FSAE 車両運動シミュレータ",
+    "subtitle": "Formula TMU — 統合車両シミュレーションシステム",
+    "description": "このダッシュボードはエンジン特性の可視化、車両パラメータ管理、シミュレーション実行、FSAE 2026レギュレーション適合性チェックのためのツールを提供します。",
+    "cards": {
+      "engine": {
+        "title": "エンジン特性",
+        "desc": "エンジントルク・パワーカーブの可視化と分析。Honda CBR600RRデータに基づく。"
+      },
+      "vehicle": {
+        "title": "車両パラメータ",
+        "desc": "14自由度車両モデルのパラメータ（質量、慣性、サスペンション、タイヤ）の閲覧・編集。"
+      },
+      "simulation": {
+        "title": "シミュレーション実行",
+        "desc": "各種シナリオ（ステップステア、定常円旋回、加速）での車両運動シミュレーション実行。"
+      },
+      "regulation": {
+        "title": "レギュレーション確認",
+        "desc": "車両設計のFSAE 2026規則への適合性を検証。"
+      },
+      "tire": {
+        "title": "タイヤモデル",
+        "desc": "TMeasyタイヤモデルのパラメータと力特性カーブの表示。"
+      },
+      "export": {
+        "title": "パラメータ エクスポート",
+        "desc": "最適化された車両パラメータをJSON/YAML形式でエクスポート。"
+      }
+    }
+  },
+  "engine": {
+    "title": "エンジントルク・パワーカーブ",
+    "subtitle": "Honda CBR600RR (599cc 直列4気筒)",
+    "torque_label": "トルク [Nm]",
+    "power_label": "パワー [kW]",
+    "rpm_label": "エンジン回転数 [RPM]",
+    "peak_torque": "最大トルク",
+    "peak_power": "最大出力",
+    "idle_rpm": "アイドリング回転数",
+    "redline_rpm": "レッドライン回転数",
+    "restrictor_note": "注: 出力は20mm吸気リストリクターにより制限されます（FSAE規則 IC.1.7）",
+    "at_rpm": "回転時",
+    "displacement": "排気量",
+    "configuration": "エンジン形式",
+    "max_power": "最大出力",
+    "max_torque": "最大トルク"
+  },
+  "vehicle": {
+    "title": "車両パラメータ（14自由度モデル）",
+    "sections": {
+      "mass_inertia": "質量・慣性",
+      "dimensions": "寸法",
+      "suspension": "サスペンション",
+      "tire": "タイヤ",
+      "aero": "空力",
+      "powertrain": "パワートレイン",
+      "frame": "フレーム剛性"
+    },
+    "save": "パラメータ保存",
+    "reset": "デフォルトに戻す",
+    "saved_msg": "パラメータを保存しました。",
+    "reset_msg": "パラメータをデフォルトに戻しました。"
+  },
+  "simulation": {
+    "title": "シミュレーション実行",
+    "scenario": "シナリオ",
+    "scenarios": {
+      "step_steer": "ステップステア（安定性テスト）",
+      "circle": "定常円旋回",
+      "acceleration": "全開加速",
+      "cornering": "コーナリング＋加速（LSD評価）",
+      "skidpad": "スキッドパッド"
+    },
+    "run": "シミュレーション実行",
+    "running": "実行中...",
+    "results": "シミュレーション結果",
+    "no_results": "まだシミュレーション結果がありません。シナリオを選択して実行してください。"
+  },
+  "regulation": {
+    "title": "FSAE 2026 レギュレーション適合性チェック",
+    "run_check": "適合性チェック実行",
+    "status_pass": "合格",
+    "status_fail": "不合格",
+    "status_warn": "警告",
+    "categories": {
+      "frame": "フレーム・構造",
+      "suspension": "サスペンション",
+      "powertrain": "パワートレイン",
+      "aero": "空力デバイス",
+      "cockpit": "コックピット",
+      "safety": "安全装備"
+    },
+    "overall": "総合判定",
+    "details": "詳細"
+  },
+  "tire": {
+    "title": "タイヤモデル（TMeasy）",
+    "force_curves": "力特性カーブ",
+    "fx_vs_slip": "縦力 vs スリップ率",
+    "fy_vs_alpha": "横力 vs スリップ角",
+    "parameters": "モデルパラメータ"
+  },
+  "export": {
+    "title": "車両パラメータ エクスポート",
+    "format": "形式",
+    "formats": {
+      "json": "JSON",
+      "yaml": "YAML",
+      "cpp_header": "C++ヘッダー (constexpr)"
+    },
+    "download": "ダウンロード",
+    "preview": "プレビュー",
+    "include_engine": "エンジンデータを含む",
+    "include_tire": "タイヤデータを含む"
+  },
+  "settings": {
+    "title": "設定",
+    "language": "言語",
+    "theme": "テーマ",
+    "themes": {
+      "light": "ライト",
+      "dark": "ダーク"
+    }
+  },
+  "common": {
+    "loading": "読み込み中...",
+    "error": "エラーが発生しました。",
+    "success": "成功",
+    "cancel": "キャンセル",
+    "confirm": "確認",
+    "close": "閉じる",
+    "unit": "単位",
+    "value": "値",
+    "parameter": "パラメータ",
+    "description": "説明"
+  }
+}

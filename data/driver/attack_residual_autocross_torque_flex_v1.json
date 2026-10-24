@@ -1,0 +1,35 @@
+{
+  "schema": "attack_residual_profile_v1",
+  "description": "Initial fixed-course residual for ASE autocross with flexible chassis and 40 Nm torque steering. Keeps the generic attack driver unchanged and applies only a small steering feed-forward correction through --attack-residual-profile.",
+  "limits": {
+    "max_delta_v_ref_mps": 2.0,
+    "max_delta_steer_ff_rad": 0.035
+  },
+  "samples": [
+    {
+      "s": 0.0,
+      "delta_v_ref_mps": 0.0,
+      "delta_steer_ff_rad": 0.0
+    },
+    {
+      "s": 810.0,
+      "delta_v_ref_mps": 0.0,
+      "delta_steer_ff_rad": 0.0
+    },
+    {
+      "s": 835.0,
+      "delta_v_ref_mps": 0.0,
+      "delta_steer_ff_rad": 0.015
+    },
+    {
+      "s": 905.0,
+      "delta_v_ref_mps": 0.0,
+      "delta_steer_ff_rad": 0.015
+    },
+    {
+      "s": 930.0,
+      "delta_v_ref_mps": 0.0,
+      "delta_steer_ff_rad": 0.0
+    }
+  ]
+}

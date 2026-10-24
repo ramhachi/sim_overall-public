@@ -1,0 +1,13 @@
+=== Grid Search Results for skidpad Track ===
+Date: 2026/02/14 12:36:32
+Total iterations: 60
+Elapsed time: 0.8 minutes
+
+Best cost: 0.6420
+RMS Lateral Error: 0.011 m
+RMS Heading Error: 0.90 deg
+
+# Command line arguments:
+--kp-steer 1.200000 --kd-steer 0.200000 --ki-steer 0.050000 \
+--kh-steer 0.300000 --kff-steer 1.000000 \
+--kp-speed 0.300000 --ki-speed 0.050000

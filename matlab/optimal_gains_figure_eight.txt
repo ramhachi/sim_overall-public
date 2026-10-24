@@ -1,0 +1,19 @@
+=== Optimal PID Gains for figure_eight Track ===
+Track radius: 30.0 m
+Optimization date: 2026/02/13 16:23:40
+
+# C++ Command Line Arguments:
+--kp-steer 1.998989 --kd-steer 0.378579 --ki-steer 0.196847 \
+--kh-steer 0.592607 --kff-steer 1.093324 \
+--kp-speed 0.354563 --ki-speed 0.077247
+
+# Individual Gains:
+Kp_steer  = 1.998989
+Kd_steer  = 0.378579
+Ki_steer  = 0.196847
+Kh_steer  = 0.592607
+Kff_steer = 1.093324
+Kp_speed  = 0.354563
+Ki_speed  = 0.077247
+
+Best cost: 2.9977

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ t.app_title }}</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- ========== ナビゲーション ========== -->
+    <nav id="sidebar">
+        <div class="logo">🏎️ FSAE Sim</div>
+        <ul>
+            <li><a href="#" data-page="home" class="active">{{ t.nav.home }}</a></li>
+            <li><a href="#" data-page="engine">{{ t.nav.engine }}</a></li>
+            <li><a href="#" data-page="vehicle">{{ t.nav.vehicle }}</a></li>
+            <li><a href="#" data-page="simulation">{{ t.nav.simulation }}</a></li>
+            <li><a href="#" data-page="regulation">{{ t.nav.regulation }}</a></li>
+            <li><a href="#" data-page="tire">{{ t.nav.tire }}</a></li>
+            <li><a href="#" data-page="export">{{ t.nav.export }}</a></li>
+        </ul>
+        <div class="lang-switch">
+            <select id="langSelect" onchange="switchLang(this.value)">
+                <option value="en" {% if lang == 'en' %}selected{% endif %}>English</option>
+                <option value="ja" {% if lang == 'ja' %}selected{% endif %}>日本語</option>
+            </select>
+        </div>
+    </nav>
+
+    <!-- ========== メインコンテンツ ========== -->
+    <main id="content">
+        <!-- HOME -->
+        <section id="page-home" class="page active">
+            <h1>{{ t.home.title }}</h1>
+            <p class="subtitle">{{ t.home.subtitle }}</p>
+            <p>{{ t.home.description }}</p>
+            <div class="card-grid">
+                <div class="card" onclick="goPage('engine')">
+                    <h3>🔧 {{ t.home.cards.engine.title }}</h3>
+                    <p>{{ t.home.cards.engine.desc }}</p>
+                </div>
+                <div class="card" onclick="goPage('vehicle')">
+                    <h3>🚗 {{ t.home.cards.vehicle.title }}</h3>
+                    <p>{{ t.home.cards.vehicle.desc }}</p>
+                </div>
+                <div class="card" onclick="goPage('simulation')">
+                    <h3>▶️ {{ t.home.cards.simulation.title }}</h3>
+                    <p>{{ t.home.cards.simulation.desc }}</p>
+                </div>
+                <div class="card" onclick="goPage('regulation')">
+                    <h3>📋 {{ t.home.cards.regulation.title }}</h3>
+                    <p>{{ t.home.cards.regulation.desc }}</p>
+                </div>
+                <div class="card" onclick="goPage('tire')">
+                    <h3>🛞 {{ t.home.cards.tire.title }}</h3>
+                    <p>{{ t.home.cards.tire.desc }}</p>
+                </div>
+                <div class="card" onclick="goPage('export')">
+                    <h3>📦 {{ t.home.cards.export.title }}</h3>
+                    <p>{{ t.home.cards.export.desc }}</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ENGINE -->
+        <section id="page-engine" class="page">
+            <h1>{{ t.engine.title }}</h1>
+            <p class="subtitle">{{ t.engine.subtitle }}</p>
+            <div class="engine-info" id="engineInfo"></div>
+            <div id="engineChart" class="chart"></div>
+            <p class="note">{{ t.engine.restrictor_note }}</p>
+        </section>
+
+        <!-- VEHICLE PARAMS -->
+        <section id="page-vehicle" class="page">
+            <h1>{{ t.vehicle.title }}</h1>
+            <div id="vehicleForm"></div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="saveParams()">{{ t.vehicle.save }}</button>
+                <button class="btn btn-secondary" onclick="resetParams()">{{ t.vehicle.reset }}</button>
+            </div>
+            <div id="vehicleMsg" class="msg"></div>
+        </section>
+
+        <!-- SIMULATION -->
+        <section id="page-simulation" class="page">
+            <h1>{{ t.simulation.title }}</h1>
+            <div class="form-row">
+                <label>{{ t.simulation.scenario }}:</label>
+                <select id="simScenario">
+                    <option value="step_steer">{{ t.simulation.scenarios.step_steer }}</option>
+                    <option value="circle">{{ t.simulation.scenarios.circle }}</option>
+                    <option value="acceleration">{{ t.simulation.scenarios.acceleration }}</option>
+                    <option value="cornering">{{ t.simulation.scenarios.cornering }}</option>
+                    <option value="skidpad">{{ t.simulation.scenarios.skidpad }}</option>
+                </select>
+                <button class="btn btn-primary" id="runSimBtn" onclick="runSim()">{{ t.simulation.run }}</button>
+            </div>
+            <div id="simResults" class="results-box">
+                <p>{{ t.simulation.no_results }}</p>
+            </div>
+        </section>
+
+        <!-- REGULATION -->
+        <section id="page-regulation" class="page">
+            <h1>{{ t.regulation.title }}</h1>
+            <button class="btn btn-primary" onclick="runRegCheck()">{{ t.regulation.run_check }}</button>
+            <div id="regOverall" class="reg-overall"></div>
+            <table id="regTable" class="reg-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>{{ t.regulation.categories.frame }}</th>
+                        <th>Rule</th>
+                        <th>{{ t.common.value }}</th>
+                        <th>Required</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </section>
+
+        <!-- TIRE -->
+        <section id="page-tire" class="page">
+            <h1>{{ t.tire.title }}</h1>
+            <div class="form-row">
+                <label>Fz [N]:</label>
+                <input type="number" id="tireFz" value="1000" step="100" min="100" max="5000">
+                <button class="btn btn-secondary" onclick="loadTireData()">Update</button>
+            </div>
+            <div class="chart-grid">
+                <div id="fxChart" class="chart"></div>
+                <div id="fyChart" class="chart"></div>
+            </div>
+        </section>
+
+        <!-- EXPORT -->
+        <section id="page-export" class="page">
+            <h1>{{ t.export.title }}</h1>
+            <div class="form-row">
+                <label>{{ t.export.format }}:</label>
+                <select id="exportFmt">
+                    <option value="json">{{ t.export.formats.json }}</option>
+                    <option value="yaml">{{ t.export.formats.yaml }}</option>
+                    <option value="cpp_header">{{ t.export.formats.cpp_header }}</option>
+                </select>
+                <label><input type="checkbox" id="exportEngine" checked> {{ t.export.include_engine }}</label>
+                <label><input type="checkbox" id="exportTire" checked> {{ t.export.include_tire }}</label>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="previewExport()">{{ t.export.preview }}</button>
+                <button class="btn btn-secondary" onclick="downloadExport()">{{ t.export.download }}</button>
+            </div>
+            <pre id="exportPreview" class="code-preview"></pre>
+        </section>
+    </main>
+
+    <script src="/static/js/main.js"></script>
+    <script>
+        // i18n data embedded at render time
+        const T = {{ t | tojson }};
+        const LANG = "{{ lang }}";
+    </script>
+</body>
+</html>

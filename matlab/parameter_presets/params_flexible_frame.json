@@ -1,0 +1,7 @@
+{
+  "suspension": {
+    "K_chassis": 2000.0,
+    "C_chassis": 5.0,
+    "I_twist": 1.5
+  }
+}

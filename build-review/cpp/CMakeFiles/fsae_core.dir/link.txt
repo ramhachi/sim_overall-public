@@ -1,0 +1,2 @@
+/usr/bin/ar qc libfsae_core.a CMakeFiles/fsae_core.dir/src/math/rotation.cpp.o CMakeFiles/fsae_core.dir/src/math/spline.cpp.o CMakeFiles/fsae_core.dir/src/physics/aero/aero_map_4d.cpp.o
+/usr/bin/ranlib libfsae_core.a

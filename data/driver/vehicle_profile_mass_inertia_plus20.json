@@ -1,0 +1,25 @@
+{
+  "mass": {
+    "m_total": 338.4,
+    "m_sprung": 276.0,
+    "m_unsprung": [14.4, 14.4, 16.8, 16.8],
+    "Ixx": 38.4,
+    "Iyy": 114.0,
+    "Izz": 102.0,
+    "Ixz": -3.6,
+    "Iw": 0.6
+  },
+  "suspension": {
+    "K_chassis": 2000.0,
+    "C_chassis": 5.0,
+    "I_twist": 1.5
+  },
+  "steering": {
+    "torque_mode": true,
+    "I_steer": 0.02,
+    "R_steer": 4.5,
+    "T_fric": 0.3,
+    "C_steer_torque": 0.3,
+    "T_driver_max": 25.0
+  }
+}

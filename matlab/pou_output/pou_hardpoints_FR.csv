@@ -1,0 +1,14 @@
+Point Name,X [mm],Y [mm],Z [mm]
+FR_M_pivot,44.943,766.828,-50.000
+FR_bellcrank_pivot,29.424,450.000,-172.854
+FR_upper_arm_front_chassis,198.000,382.559,-399.949
+FR_upper_arm_rear_chassis,-198.000,382.559,-399.949
+FR_upper_arm_upright,37.161,762.806,-383.979
+FR_lower_arm_front_chassis,198.000,450.000,-152.854
+FR_lower_arm_rear_chassis,-198.000,450.000,-152.854
+FR_lower_arm_upright,50.000,779.937,-138.997
+FR_tie_rod_chassis,50.000,200.000,-162.500
+FR_tie_rod_upright,150.000,883.635,-150.000
+FR_kingpin_origin,50.000,779.937,-138.997
+FR_kingpin_tip,42.169,769.487,-288.427
+FR_caliper_center,0.000,933.635,0.000

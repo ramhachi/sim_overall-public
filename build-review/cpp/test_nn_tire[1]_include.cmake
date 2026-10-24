@@ -1,0 +1,5 @@
+if(EXISTS "/Users/sota/projects/FomulaTMU/sim_overall/build-review/cpp/test_nn_tire[1]_tests.cmake")
+  include("/Users/sota/projects/FomulaTMU/sim_overall/build-review/cpp/test_nn_tire[1]_tests.cmake")
+else()
+  add_test(test_nn_tire_NOT_BUILT test_nn_tire_NOT_BUILT)
+endif()

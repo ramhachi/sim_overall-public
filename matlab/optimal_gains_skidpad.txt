@@ -1,0 +1,21 @@
+=== Optimal PID Gains for skidpad Track ===
+Track radius: 9.1 m
+Optimization date: 2026/04/22 22:27:10
+
+# C++ Command Line Arguments:
+--kp-steer 1.207125 --kd-steer 0.905420 --ki-steer 0.064577 \
+--kh-steer 0.262949 --kff-steer 0.736567 \
+--kp-speed 0.100039 --ki-speed 0.101477 \
+--max-throttle 1.0
+
+# Individual Gains:
+Kp_steer  = 1.207125
+Kd_steer  = 0.905420
+Ki_steer  = 0.064577
+Kh_steer  = 0.262949
+Kff_steer = 0.736567
+Kp_speed  = 0.100039
+Ki_speed  = 0.101477
+max_throttle = 1.0 (Fixed)
+
+Best cost: 40.8289

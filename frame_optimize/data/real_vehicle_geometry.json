@@ -1,0 +1,79 @@
+{
+  "dimensions": {
+    "wheelbase_m": 1.7354,
+    "track_front_m": 1.5372,
+    "track_rear_m": 1.6671,
+    "cg_height_m": 0.28,
+    "total_mass_kg": 268
+  },
+  "exclusion_zones": [
+    {
+      "name": "nose_ia_area",
+      "type": "AABB",
+      "min": [
+        -0.4,
+        -0.15,
+        0.0
+      ],
+      "max": [
+        0.0,
+        0.15,
+        0.28
+      ],
+      "comment": "IA/AIP nose area (F.8.4: ≥200mm fwd of FBH, ≥200mm wide, ≥100mm high). FBH square node zone - no frame tubes here."
+    },
+    {
+      "name": "driver_cockpit",
+      "type": "AABB",
+      "min": [
+        0.10,
+        -0.225,
+        0.10
+      ],
+      "max": [
+        1.10,
+        0.225,
+        0.70
+      ],
+      "comment": "Driver cockpit template zone (T.1.1/T.1.2). Section 450mm wide × 600mm tall. Inserted from top and nose side."
+    },
+    {
+      "name": "front_hoop_sweep",
+      "type": "AABB",
+      "min": [
+        -0.05,
+        -0.25,
+        0.80
+      ],
+      "max": [
+        0.45,
+        0.25,
+        1.05
+      ],
+      "comment": "Front Hoop inner sweep zone - driver helmet clearance. Tubes in this region interfere with driver."
+    }
+  ],
+  "frame_nodes": {
+    "description": "28ノードの実車フレーム（FSAE規則準拠）",
+    "groups": {
+      "main_hoop": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "front_hoop": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "side_impact": [
+        5,
+        6,
+        13,
+        14
+      ]
+    }
+  }
+}

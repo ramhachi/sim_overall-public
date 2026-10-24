@@ -1,0 +1,87 @@
+{
+  "downloaded_at": "2026-05-16T05:14:54.409907+00:00",
+  "source": "https://www.fsaettc.org/",
+  "targets": [
+    {
+      "group": "round6",
+      "filename": "Contents_Round6.pdf",
+      "attachment_id": 289,
+      "url": "https://www.fsaettc.org/download/file.php?id=289",
+      "path": "data/tiredata/_downloads/fsaettc/round6/Contents_Round6.pdf",
+      "bytes": 1202334,
+      "status": "downloaded"
+    },
+    {
+      "group": "round6",
+      "filename": "RunGuide_Round6.pdf",
+      "attachment_id": 290,
+      "url": "https://www.fsaettc.org/download/file.php?id=290",
+      "path": "data/tiredata/_downloads/fsaettc/round6/RunGuide_Round6.pdf",
+      "bytes": 21231,
+      "status": "downloaded"
+    },
+    {
+      "group": "round6",
+      "filename": "RunData_10inch_Cornering_ASCII_SI.zip",
+      "attachment_id": 292,
+      "url": "https://www.fsaettc.org/download/file.php?id=292",
+      "path": "data/tiredata/_downloads/fsaettc/round6/RunData_10inch_Cornering_ASCII_SI.zip",
+      "bytes": 25770442,
+      "status": "downloaded"
+    },
+    {
+      "group": "round6",
+      "filename": "RunData_10inch_DriveBrake_ASCII_SI.zip",
+      "attachment_id": 296,
+      "url": "https://www.fsaettc.org/download/file.php?id=296",
+      "path": "data/tiredata/_downloads/fsaettc/round6/RunData_10inch_DriveBrake_ASCII_SI.zip",
+      "bytes": 24951487,
+      "status": "downloaded"
+    },
+    {
+      "group": "round6",
+      "filename": "RawData_10inch_DriveBrake_ASCII_SI.zip",
+      "attachment_id": 314,
+      "url": "https://www.fsaettc.org/download/file.php?id=314",
+      "path": "data/tiredata/_downloads/fsaettc/round6/RawData_10inch_DriveBrake_ASCII_SI.zip",
+      "bytes": 50783735,
+      "status": "downloaded"
+    },
+    {
+      "group": "round9",
+      "filename": "Contents_Round9.pdf",
+      "attachment_id": 925,
+      "url": "https://www.fsaettc.org/download/file.php?id=925",
+      "path": "data/tiredata/_downloads/fsaettc/round9/Contents_Round9.pdf",
+      "bytes": 1188178,
+      "status": "downloaded"
+    },
+    {
+      "group": "round9",
+      "filename": "RunGuide_Round9.pdf",
+      "attachment_id": 924,
+      "url": "https://www.fsaettc.org/download/file.php?id=924",
+      "path": "data/tiredata/_downloads/fsaettc/round9/RunGuide_Round9.pdf",
+      "bytes": 193031,
+      "status": "downloaded"
+    },
+    {
+      "group": "round9",
+      "filename": "RunData_Cornering_ASCII_SI_Round9.zip",
+      "attachment_id": 907,
+      "url": "https://www.fsaettc.org/download/file.php?id=907",
+      "path": "data/tiredata/_downloads/fsaettc/round9/RunData_Cornering_ASCII_SI_Round9.zip",
+      "bytes": 94984781,
+      "status": "downloaded"
+    },
+    {
+      "group": "round9",
+      "filename": "RunData_DriveBrake_ASCII_SI_Round9.zip",
+      "attachment_id": 903,
+      "url": "https://www.fsaettc.org/download/file.php?id=903",
+      "path": "data/tiredata/_downloads/fsaettc/round9/RunData_DriveBrake_ASCII_SI_Round9.zip",
+      "bytes": 71646257,
+      "status": "downloaded"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+# ninja log v7
+2	947	1776317319694213005	CMakeFiles/fsae_core.dir/src/math/spline.cpp.o	67cfa4a128a95f3d
+2	1686	1776317319693970339	CMakeFiles/fsae_core.dir/src/math/rotation.cpp.o	74ceb61cd0254497
+4	1846	1776317319695903128	CMakeFiles/test_aero_integration.dir/src/test_aero_integration.cpp.o	a90cdcb16cf45175
+3	1907	1776317319695344420	CMakeFiles/test_aero_map_4d.dir/src/test_aero_map_4d.cpp.o	3ced444b677c8b7
+3	1973	1776317319694682713	CMakeFiles/test_velocity_profile.dir/src/test_velocity_profile.cpp.o	d04cdf0c492a58b8
+2	2586	1776317319694376589	CMakeFiles/fsae_core.dir/src/physics/aero/aero_map_4d.cpp.o	176aff688de93f3d
+2586	2684	1776317322277797197	libfsae_core.a	44b1ac661a36192b
+2685	2959	1776317322377312331	test_aero_integration	e85607bba164d216
+2685	2980	1776317322376910956	test_aero_map_4d	47389f11423c1a8e
+2684	3082	1776317322376600332	test_velocity_profile	56bb07b99b3a06a6
+2	4198	1776317319694535463	CMakeFiles/test_14dof_new.dir/src/test_14dof_new.cpp.o	908f9d90c1948d32
+3	4979	1776317319695054463	CMakeFiles/laptime_sim.dir/src/main_laptime_sim.cpp.o	60be30d9e726b7cb
+4198	5289	1776317323890562762	test_14dof_new	eb09f66fa2dc6fb0
+4979	6866	1776317324671422315	laptime_sim	2cc28f657f0fc19c
+8	2995	1776317604226237405	CMakeFiles/test_14dof_new.dir/src/test_14dof_new.cpp.o	908f9d90c1948d32
+9	3826	1776317604226767529	CMakeFiles/laptime_sim.dir/src/main_laptime_sim.cpp.o	60be30d9e726b7cb
+2995	4088	1776317607212449082	test_14dof_new	eb09f66fa2dc6fb0
+3827	5653	1776317608044257846	laptime_sim	2cc28f657f0fc19c

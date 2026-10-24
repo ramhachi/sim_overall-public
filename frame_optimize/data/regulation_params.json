@@ -1,0 +1,245 @@
+{
+  "comment": "FSAE 2026 V1.0 Regulation F.3.4.1 - Minimum Size Requirements (confirmed from rulebook screenshots)",
+  "size_classes": {
+    "A": {
+      "I_min_mm4": 11320.0,
+      "A_min_mm2": 173.0,
+      "D_min_mm": 25.0,
+      "t_min_mm": 2.0,
+      "example_round": "1.0\" x 0.095\" (25 x 2.5 mm)",
+      "comment": "Highest strength - Front Hoop, Main Hoop, Shoulder Harness Bar"
+    },
+    "B": {
+      "I_min_mm4": 8509.0,
+      "A_min_mm2": 114.0,
+      "D_min_mm": 25.0,
+      "t_min_mm": 1.2,
+      "example_round": "1.0\" x 0.065\" (25.4 x 1.6 mm)",
+      "comment": "Medium strength - FBH, Side Impact, MH Bracing, Harness Attach"
+    },
+    "C": {
+      "I_min_mm4": 6695.0,
+      "A_min_mm2": 91.0,
+      "D_min_mm": 25.0,
+      "t_min_mm": 1.2,
+      "example_round": "1.0\" x 0.049\" (25.4 x 1.2 mm)",
+      "comment": "Lower strength - MH Brace Support, Component Protection, General Structural"
+    },
+    "D": {
+      "I_min_mm4": 18015.0,
+      "A_min_mm2": 126.0,
+      "D_min_mm": 35.0,
+      "t_min_mm": 1.2,
+      "example_round": "1.375\" x 0.049\" (35 x 1.2 mm)",
+      "comment": "Bent/multi-tube Upper Side Impact"
+    },
+    "None": {
+      "I_min_mm4": 0.0,
+      "A_min_mm2": 0.0,
+      "D_min_mm": 0.0,
+      "t_min_mm": 0.0,
+      "comment": "No size requirement"
+    }
+  },
+  "element_groups": {
+    "main_hoop": {
+      "required_size": "A",
+      "material_restriction": "steel_only",
+      "description": "Main Hoop (F.5.8) - single continuous steel tube, ≤10° from vertical"
+    },
+    "mh_bracing": {
+      "required_size": "B",
+      "material_restriction": "steel_only",
+      "description": "Main Hoop Bracing (F.5.9) - steel only, ≥30° angle, within 160mm of top"
+    },
+    "shoulder_bar": {
+      "required_size": "A",
+      "material_restriction": "steel_only",
+      "description": "Shoulder Harness Bar (F.6.5) - steel only, single continuous tube"
+    },
+    "shoulder": {
+      "required_size": "A",
+      "material_restriction": "steel_only",
+      "description": "V1 shoulder harness bar alias for shoulder_bar"
+    },
+    "front_hoop": {
+      "required_size": "A",
+      "material_restriction": "none",
+      "description": "Front Hoop (F.5.7) - continuous tube, ≤20° from vertical above Upper SI"
+    },
+    "front_bulkhead": {
+      "required_size": "B",
+      "material_restriction": "none",
+      "description": "Front Bulkhead (F.6.1) - closed cross-section"
+    },
+    "fbh_support": {
+      "required_size": "C",
+      "material_restriction": "none",
+      "description": "FBH Support (F.6.2) - ≥3 per side (upper, lower, diagonal), triangulated to FH"
+    },
+    "front_susp_mount": {
+      "required_size": "C",
+      "material_restriction": "none",
+      "description": "Front suspension mount support links separated from regulation FBH support tubes"
+    },
+    "fh_bracing": {
+      "required_size": "B",
+      "material_restriction": "none",
+      "description": "Front Hoop Bracing (F.6.3) - 1 per side, forward to FBH or triangulation"
+    },
+    "side_impact": {
+      "required_size": "B",
+      "material_restriction": "none",
+      "description": "Side Impact Structure (F.6.4) - ≥3 per side. Upper SI: 290-345mm from ground"
+    },
+    "side_impact_bent": {
+      "required_size": "D",
+      "material_restriction": "none",
+      "description": "Bent/multi-tube Upper Side Impact (F.6.4.4)"
+    },
+    "mh_brace_support": {
+      "required_size": "C",
+      "material_restriction": "none",
+      "description": "MH Brace Support (F.6.6) - 2 per side (upper, lower), triangulation"
+    },
+    "component_protection": {
+      "required_size": "C",
+      "material_restriction": "none",
+      "description": "Component protection and drivetrain mounting tubes in regulation-defined frame regions"
+    },
+    "diff_mount": {
+      "required_size": "C",
+      "material_restriction": "none",
+      "description": "Differential mount support tubes aft of the main hoop brace trapezoid"
+    },
+    "rear_box": {
+      "required_size": "C",
+      "material_restriction": "none",
+      "description": "Rear box structure between the mandatory brace trapezoid and rear free-region plane"
+    },
+    "upper_rail": {
+      "required_size": "B",
+      "material_restriction": "none",
+      "description": "Upper Frame Rail"
+    },
+    "lower_rail": {
+      "required_size": "B",
+      "material_restriction": "none",
+      "description": "Lower Frame Rail"
+    },
+    "diagonal_brace": {
+      "required_size": "C",
+      "material_restriction": "none",
+      "description": "Diagonal Bracing Members"
+    },
+    "secondary_brace": {
+      "required_size": "C",
+      "material_restriction": "none",
+      "description": "Secondary/general structural tubing (F.3.4.1-o)"
+    },
+    "structural": {
+      "required_size": "B",
+      "material_restriction": "none",
+      "description": "V1 aggregate structural group; Size B conservatively covers its Size B/C members"
+    }
+  },
+  "material_restrictions": {
+    "steel_only_groups": [
+      "main_hoop",
+      "mh_bracing",
+      "shoulder_bar",
+      "shoulder"
+    ],
+    "aluminum_min_thickness_unwelded_mm": 2.0,
+    "aluminum_min_thickness_welded_mm": 3.0,
+    "composite_forbidden_groups": [
+      "main_hoop",
+      "mh_bracing",
+      "shoulder_bar",
+      "shoulder"
+    ],
+    "comment": "F.3.2.1 / F.3.5 - Steel required only for MH, MH Bracing, and Shoulder Bar. Composites in other regulated locations require F.4.1.3 equivalence."
+  },
+  "cockpit_template": {
+    "opening_width_mm": 200.0,
+    "opening_height_variable": true,
+    "section_template_width_mm": 450.0,
+    "section_template_height_mm": 600.0,
+    "insertion_method": "from_top_and_nose_side",
+    "comment": "T.1.1/T.1.2 - Cockpit opening and internal section templates. Inserted from top and nose side, moved to stop point."
+  },
+  "driver_template": {
+    "description": "95th percentile male template (F.5.6.5)",
+    "segments_mm": [
+      200,
+      490,
+      200,
+      280,
+      300
+    ],
+    "segment_types": [
+      "circle",
+      "straight",
+      "circle",
+      "straight",
+      "circle"
+    ],
+    "helmet_clearance_mm": 50,
+    "comment": "phi200-490-phi200-280-phi300, 50mm helmet clearance from MH-FH line"
+  },
+  "impact_attenuator": {
+    "min_length_mm": 200,
+    "min_height_mm": 100,
+    "min_width_mm": 200,
+    "min_forward_distance_mm": 200,
+    "max_bottom_edge_above_lower_si_mm": 175,
+    "comment": "F.8.4 - IA must be ≥200mm long, ≥100mm high, ≥200mm wide for ≥200mm forward of FBH"
+  },
+  "anti_intrusion_plate": {
+    "steel_min_thickness_mm": 1.5,
+    "aluminum_min_thickness_mm": 4.0,
+    "profile_must_align_fbh": true,
+    "static_load_kn": 120,
+    "load_area_mm": [
+      200,
+      100
+    ],
+    "comment": "F.8.2/F.8.3 - AIP must align with or exceed FBH outer dimensions"
+  },
+  "geometry_constraints": {
+    "mh_inner_width_min_mm": 380,
+    "mh_brace_angle_min_deg": 30,
+    "front_hoop_tilt_max_deg": 20,
+    "bend_min_radius_od_ratio": 3.0,
+    "helmet_clearance_mm": 50
+  },
+  "section_requirements": {
+    "comment": "V2 group-level F.6 checks. fbh_support also provides the front-hoop bracing load path (F.6.3).",
+    "fbh_support": {
+      "min_per_side": 3,
+      "rules": [
+        "F.6.2",
+        "F.6.3"
+      ]
+    },
+    "side_impact": {
+      "min_per_side": 3,
+      "rules": [
+        "F.6.4"
+      ]
+    },
+    "mh_brace_support": {
+      "min_per_side": 2,
+      "rules": [
+        "F.6.6"
+      ]
+    },
+    "driver_template": {
+      "min_width_m": 0.25,
+      "min_length_m": 0.55,
+      "rules": [
+        "F.5.6.4"
+      ]
+    }
+  }
+}

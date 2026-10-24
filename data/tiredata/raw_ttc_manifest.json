@@ -1,0 +1,581 @@
+{
+  "notes": "Round 8 project 1965, Round 6 project 1654, and Round 9 project 2356 run mappings derived from the TTC run guides. Round 8 10-inch data is cornering-only/free-rolling; Round 6 supplies matching 10-inch drive/brake and cornering data for separate 18-inch Hoosier constructions. Round 9 R20 data is split by rim width because Rim_Width is not part of the 5D PINN input.",
+  "files": [
+    {
+      "name": "B1965run1.dat",
+      "project_id": "1965",
+      "run_number": "001",
+      "tire_name": "Hoosier 16.0X7.5-10, R25B, Rim7",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1965run2.dat",
+      "project_id": "1965",
+      "run_number": "002",
+      "tire_name": "Hoosier 16.0X7.5-10, R25B, Rim7",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1965run4.dat",
+      "project_id": "1965",
+      "run_number": "004",
+      "tire_name": "Hoosier 16.0X7.5-10, R25B, Rim7",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1965run5.dat",
+      "project_id": "1965",
+      "run_number": "005",
+      "tire_name": "Hoosier 16.0X7.5-10, R25B, Rim8",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 8.0
+    },
+    {
+      "name": "B1965run6.dat",
+      "project_id": "1965",
+      "run_number": "006",
+      "tire_name": "Hoosier 16.0X7.5-10, R25B, Rim8",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 8.0
+    },
+    {
+      "name": "B1965run7.dat",
+      "project_id": "1965",
+      "run_number": "007",
+      "tire_name": "Hoosier 16.0X7.5-10, R25B, Rim8",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 8.0
+    },
+    {
+      "name": "B1965run8.dat",
+      "project_id": "1965",
+      "run_number": "008",
+      "tire_name": "Hoosier 16.0X6.0-10, R25B, Rim6",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1965run9.dat",
+      "project_id": "1965",
+      "run_number": "009",
+      "tire_name": "Hoosier 16.0X6.0-10, R25B, Rim6",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1965run10.dat",
+      "project_id": "1965",
+      "run_number": "010",
+      "tire_name": "Hoosier 16.0X6.0-10, R25B, Rim6",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1965run11.dat",
+      "project_id": "1965",
+      "run_number": "011",
+      "tire_name": "Hoosier 16.0X6.0-10, R25B, Rim7",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1965run12.dat",
+      "project_id": "1965",
+      "run_number": "012",
+      "tire_name": "Hoosier 16.0X6.0-10, R25B, Rim7",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1965run13.dat",
+      "project_id": "1965",
+      "run_number": "013",
+      "tire_name": "Hoosier 16.0X6.0-10, R25B, Rim7",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1965run14.dat",
+      "project_id": "1965",
+      "run_number": "014",
+      "tire_name": "Hoosier 16.0X7.5-10, LCO, Rim8",
+      "test_type": "Cr",
+      "compound": "LCO",
+      "rim_width_in": 8.0
+    },
+    {
+      "name": "B1965run15.dat",
+      "project_id": "1965",
+      "run_number": "015",
+      "tire_name": "Hoosier 16.0X7.5-10, LCO, Rim8",
+      "test_type": "Cr",
+      "compound": "LCO",
+      "rim_width_in": 8.0
+    },
+    {
+      "name": "B1965run16.dat",
+      "project_id": "1965",
+      "run_number": "016",
+      "tire_name": "Hoosier 16.0X7.5-10, LCO, Rim8",
+      "test_type": "Cr",
+      "compound": "LCO",
+      "rim_width_in": 8.0
+    },
+    {
+      "name": "B1965run17.dat",
+      "project_id": "1965",
+      "run_number": "017",
+      "tire_name": "Hoosier 16.0X7.5-10, LCO, Rim7",
+      "test_type": "Cr",
+      "compound": "LCO",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1965run18.dat",
+      "project_id": "1965",
+      "run_number": "018",
+      "tire_name": "Hoosier 16.0X7.5-10, LCO, Rim7",
+      "test_type": "Cr",
+      "compound": "LCO",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1965run19.dat",
+      "project_id": "1965",
+      "run_number": "019",
+      "tire_name": "Hoosier 16.0X7.5-10, LCO, Rim7",
+      "test_type": "Cr",
+      "compound": "LCO",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1965run20.dat",
+      "project_id": "1965",
+      "run_number": "020",
+      "tire_name": "Hoosier 16.0X6.0-10, LCO, Rim6",
+      "test_type": "Cr",
+      "compound": "LCO",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1965run21.dat",
+      "project_id": "1965",
+      "run_number": "021",
+      "tire_name": "Hoosier 16.0X6.0-10, LCO, Rim6",
+      "test_type": "Cr",
+      "compound": "LCO",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1965run22.dat",
+      "project_id": "1965",
+      "run_number": "022",
+      "tire_name": "Hoosier 16.0X6.0-10, LCO, Rim6",
+      "test_type": "Cr",
+      "compound": "LCO",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1965run23.dat",
+      "project_id": "1965",
+      "run_number": "023",
+      "tire_name": "Hoosier 16.0X6.0-10, LCO, Rim7",
+      "test_type": "Cr",
+      "compound": "LCO",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1965run24.dat",
+      "project_id": "1965",
+      "run_number": "024",
+      "tire_name": "Hoosier 16.0X6.0-10, LCO, Rim7",
+      "test_type": "Cr",
+      "compound": "LCO",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1965run25.dat",
+      "project_id": "1965",
+      "run_number": "025",
+      "tire_name": "Hoosier 16.0X6.0-10, LCO, Rim7",
+      "test_type": "Cr",
+      "compound": "LCO",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run20.dat",
+      "project_id": "1654",
+      "run_number": "20",
+      "tire_name": "Hoosier 18.0X7.5-10, R25B, Rim7",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run21.dat",
+      "project_id": "1654",
+      "run_number": "21",
+      "tire_name": "Hoosier 18.0X7.5-10, R25B, Rim7",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run22.dat",
+      "project_id": "1654",
+      "run_number": "22",
+      "tire_name": "Hoosier 18.0X7.5-10, R25B, Rim7",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run34.dat",
+      "project_id": "1654",
+      "run_number": "34",
+      "tire_name": "Hoosier 18.0X7.5-10, R25B, Rim7",
+      "test_type": "Db",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run35.dat",
+      "project_id": "1654",
+      "run_number": "35",
+      "tire_name": "Hoosier 18.0X7.5-10, R25B, Rim7",
+      "test_type": "Db",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run36.dat",
+      "project_id": "1654",
+      "run_number": "36",
+      "tire_name": "Hoosier 18.0X7.5-10, R25B, Rim7",
+      "test_type": "Db",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run23.dat",
+      "project_id": "1654",
+      "run_number": "23",
+      "tire_name": "Hoosier 18.0X7.5-10, R25B, Rim8",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 8.0
+    },
+    {
+      "name": "B1654run24.dat",
+      "project_id": "1654",
+      "run_number": "24",
+      "tire_name": "Hoosier 18.0X7.5-10, R25B, Rim8",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 8.0
+    },
+    {
+      "name": "B1654run25.dat",
+      "project_id": "1654",
+      "run_number": "25",
+      "tire_name": "Hoosier 18.0X7.5-10, R25B, Rim8",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 8.0
+    },
+    {
+      "name": "B1654run37.dat",
+      "project_id": "1654",
+      "run_number": "37",
+      "tire_name": "Hoosier 18.0X7.5-10, R25B, Rim8",
+      "test_type": "Db",
+      "compound": "R25B",
+      "rim_width_in": 8.0
+    },
+    {
+      "name": "B1654run38.dat",
+      "project_id": "1654",
+      "run_number": "38",
+      "tire_name": "Hoosier 18.0X7.5-10, R25B, Rim8",
+      "test_type": "Db",
+      "compound": "R25B",
+      "rim_width_in": 8.0
+    },
+    {
+      "name": "B1654run39.dat",
+      "project_id": "1654",
+      "run_number": "39",
+      "tire_name": "Hoosier 18.0X7.5-10, R25B, Rim8",
+      "test_type": "Db",
+      "compound": "R25B",
+      "rim_width_in": 8.0
+    },
+    {
+      "name": "B1654run28.dat",
+      "project_id": "1654",
+      "run_number": "28",
+      "tire_name": "Hoosier 18.0X6.0-10, R25B, Rim6",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1654run29.dat",
+      "project_id": "1654",
+      "run_number": "29",
+      "tire_name": "Hoosier 18.0X6.0-10, R25B, Rim6",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1654run40.dat",
+      "project_id": "1654",
+      "run_number": "40",
+      "tire_name": "Hoosier 18.0X6.0-10, R25B, Rim6",
+      "test_type": "Db",
+      "compound": "R25B",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1654run41.dat",
+      "project_id": "1654",
+      "run_number": "41",
+      "tire_name": "Hoosier 18.0X6.0-10, R25B, Rim6",
+      "test_type": "Db",
+      "compound": "R25B",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1654run26.dat",
+      "project_id": "1654",
+      "run_number": "26",
+      "tire_name": "Hoosier 18.0X6.0-10, R25B, Rim7",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run27.dat",
+      "project_id": "1654",
+      "run_number": "27",
+      "tire_name": "Hoosier 18.0X6.0-10, R25B, Rim7",
+      "test_type": "Cr",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run42.dat",
+      "project_id": "1654",
+      "run_number": "42",
+      "tire_name": "Hoosier 18.0X6.0-10, R25B, Rim7",
+      "test_type": "Db",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run43.dat",
+      "project_id": "1654",
+      "run_number": "43",
+      "tire_name": "Hoosier 18.0X6.0-10, R25B, Rim7",
+      "test_type": "Db",
+      "compound": "R25B",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run30.dat",
+      "project_id": "1654",
+      "run_number": "30",
+      "tire_name": "Hoosier 18.0X6.0-10, LCO C2000, Rim6",
+      "test_type": "Cr",
+      "compound": "LCO_C2000",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1654run31.dat",
+      "project_id": "1654",
+      "run_number": "31",
+      "tire_name": "Hoosier 18.0X6.0-10, LCO C2000, Rim6",
+      "test_type": "Cr",
+      "compound": "LCO_C2000",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1654run44.dat",
+      "project_id": "1654",
+      "run_number": "44",
+      "tire_name": "Hoosier 18.0X6.0-10, LCO C2000, Rim6",
+      "test_type": "Db",
+      "compound": "LCO_C2000",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1654run45.dat",
+      "project_id": "1654",
+      "run_number": "45",
+      "tire_name": "Hoosier 18.0X6.0-10, LCO C2000, Rim6",
+      "test_type": "Db",
+      "compound": "LCO_C2000",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B1654run32.dat",
+      "project_id": "1654",
+      "run_number": "32",
+      "tire_name": "Hoosier 18.0X6.0-10, LCO C2000, Rim7",
+      "test_type": "Cr",
+      "compound": "LCO_C2000",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run33.dat",
+      "project_id": "1654",
+      "run_number": "33",
+      "tire_name": "Hoosier 18.0X6.0-10, LCO C2000, Rim7",
+      "test_type": "Cr",
+      "compound": "LCO_C2000",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run46.dat",
+      "project_id": "1654",
+      "run_number": "46",
+      "tire_name": "Hoosier 18.0X6.0-10, LCO C2000, Rim7",
+      "test_type": "Db",
+      "compound": "LCO_C2000",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B1654run47.dat",
+      "project_id": "1654",
+      "run_number": "47",
+      "tire_name": "Hoosier 18.0X6.0-10, LCO C2000, Rim7",
+      "test_type": "Db",
+      "compound": "LCO_C2000",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B2356run27.dat",
+      "project_id": "2356",
+      "run_number": "027",
+      "tire_name": "Hoosier 18.0X6.0-10, R20, Rim6",
+      "test_type": "Cr",
+      "compound": "R20",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B2356run28.dat",
+      "project_id": "2356",
+      "run_number": "028",
+      "tire_name": "Hoosier 18.0X6.0-10, R20, Rim6",
+      "test_type": "Cr",
+      "compound": "R20",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B2356run29.dat",
+      "project_id": "2356",
+      "run_number": "029",
+      "tire_name": "Hoosier 18.0X6.0-10, R20, Rim6",
+      "test_type": "Cr",
+      "compound": "R20",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B2356run68.dat",
+      "project_id": "2356",
+      "run_number": "068",
+      "tire_name": "Hoosier 18.0X6.0-10, R20, Rim6",
+      "test_type": "Db",
+      "compound": "R20",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B2356run69.dat",
+      "project_id": "2356",
+      "run_number": "069",
+      "tire_name": "Hoosier 18.0X6.0-10, R20, Rim6",
+      "test_type": "Db",
+      "compound": "R20",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B2356run70.dat",
+      "project_id": "2356",
+      "run_number": "070",
+      "tire_name": "Hoosier 18.0X6.0-10, R20, Rim6",
+      "test_type": "Db",
+      "compound": "R20",
+      "rim_width_in": 6.0
+    },
+    {
+      "name": "B2356run30.dat",
+      "project_id": "2356",
+      "run_number": "030",
+      "tire_name": "Hoosier 18.0X6.0-10, R20, Rim7",
+      "test_type": "Cr",
+      "compound": "R20",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B2356run31.dat",
+      "project_id": "2356",
+      "run_number": "031",
+      "tire_name": "Hoosier 18.0X6.0-10, R20, Rim7",
+      "test_type": "Cr",
+      "compound": "R20",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B2356run32.dat",
+      "project_id": "2356",
+      "run_number": "032",
+      "tire_name": "Hoosier 18.0X6.0-10, R20, Rim7",
+      "test_type": "Cr",
+      "compound": "R20",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B2356run71.dat",
+      "project_id": "2356",
+      "run_number": "071",
+      "tire_name": "Hoosier 18.0X6.0-10, R20, Rim7",
+      "test_type": "Db",
+      "compound": "R20",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B2356run72.dat",
+      "project_id": "2356",
+      "run_number": "072",
+      "tire_name": "Hoosier 18.0X6.0-10, R20, Rim7",
+      "test_type": "Db",
+      "compound": "R20",
+      "rim_width_in": 7.0
+    },
+    {
+      "name": "B2356run73.dat",
+      "project_id": "2356",
+      "run_number": "073",
+      "tire_name": "Hoosier 18.0X6.0-10, R20, Rim7",
+      "test_type": "Db",
+      "compound": "R20",
+      "rim_width_in": 7.0
+    }
+  ]
+}

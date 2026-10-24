@@ -1,0 +1,150 @@
+{
+  "app_title": "FSAE Vehicle Simulation Dashboard",
+  "nav": {
+    "home": "Home",
+    "engine": "Engine Curve",
+    "vehicle": "Vehicle Parameters",
+    "simulation": "Simulation",
+    "regulation": "Regulation Check",
+    "tire": "Tire Model",
+    "export": "Export",
+    "settings": "Settings"
+  },
+  "home": {
+    "title": "FSAE Vehicle Dynamics Simulator",
+    "subtitle": "Formula TMU — Integrated Vehicle Simulation System",
+    "description": "This dashboard provides tools for engine curve visualization, vehicle parameter management, simulation execution, and FSAE 2026 regulation compliance checking.",
+    "cards": {
+      "engine": {
+        "title": "Engine Curve",
+        "desc": "Visualize and analyze engine torque/power curves. Based on Honda CBR600RR data."
+      },
+      "vehicle": {
+        "title": "Vehicle Parameters",
+        "desc": "View and edit 14-DOF vehicle model parameters including mass, inertia, suspension, and tires."
+      },
+      "simulation": {
+        "title": "Run Simulation",
+        "desc": "Execute vehicle dynamics simulations with various scenarios (step steer, circle, acceleration)."
+      },
+      "regulation": {
+        "title": "Regulation Check",
+        "desc": "Verify vehicle design compliance with FSAE 2026 rules."
+      },
+      "tire": {
+        "title": "Tire Model",
+        "desc": "View TMeasy tire model parameters and force curves."
+      },
+      "export": {
+        "title": "Export Parameters",
+        "desc": "Export optimized vehicle parameters in JSON/YAML format."
+      }
+    }
+  },
+  "engine": {
+    "title": "Engine Torque & Power Curves",
+    "subtitle": "Honda CBR600RR (599cc Inline-4)",
+    "torque_label": "Torque [Nm]",
+    "power_label": "Power [kW]",
+    "rpm_label": "Engine Speed [RPM]",
+    "peak_torque": "Peak Torque",
+    "peak_power": "Peak Power",
+    "idle_rpm": "Idle RPM",
+    "redline_rpm": "Redline RPM",
+    "restrictor_note": "Note: Power is limited by 20mm air intake restrictor (FSAE Rule IC.1.7)",
+    "at_rpm": "at",
+    "displacement": "Displacement",
+    "configuration": "Configuration",
+    "max_power": "Max Power",
+    "max_torque": "Max Torque"
+  },
+  "vehicle": {
+    "title": "Vehicle Parameters (14-DOF Model)",
+    "sections": {
+      "mass_inertia": "Mass & Inertia",
+      "dimensions": "Dimensions",
+      "suspension": "Suspension",
+      "tire": "Tire",
+      "aero": "Aerodynamics",
+      "powertrain": "Powertrain",
+      "frame": "Frame Flexibility"
+    },
+    "save": "Save Parameters",
+    "reset": "Reset to Defaults",
+    "saved_msg": "Parameters saved successfully.",
+    "reset_msg": "Parameters reset to defaults."
+  },
+  "simulation": {
+    "title": "Simulation Runner",
+    "scenario": "Scenario",
+    "scenarios": {
+      "step_steer": "Step Steer (stability test)",
+      "circle": "Steady-State Circular",
+      "acceleration": "Full Throttle Acceleration",
+      "cornering": "Cornering + Acceleration (LSD eval)",
+      "skidpad": "Skidpad"
+    },
+    "run": "Run Simulation",
+    "running": "Running...",
+    "results": "Simulation Results",
+    "no_results": "No simulation results yet. Select a scenario and click Run."
+  },
+  "regulation": {
+    "title": "FSAE 2026 Regulation Compliance Check",
+    "run_check": "Run Compliance Check",
+    "status_pass": "PASS",
+    "status_fail": "FAIL",
+    "status_warn": "WARNING",
+    "categories": {
+      "frame": "Frame & Structure",
+      "suspension": "Suspension",
+      "powertrain": "Powertrain",
+      "aero": "Aerodynamics",
+      "cockpit": "Cockpit",
+      "safety": "Safety"
+    },
+    "overall": "Overall Status",
+    "details": "Details"
+  },
+  "tire": {
+    "title": "Tire Model (TMeasy)",
+    "force_curves": "Force Curves",
+    "fx_vs_slip": "Longitudinal Force vs Slip Ratio",
+    "fy_vs_alpha": "Lateral Force vs Slip Angle",
+    "parameters": "Model Parameters"
+  },
+  "export": {
+    "title": "Export Vehicle Parameters",
+    "format": "Format",
+    "formats": {
+      "json": "JSON",
+      "yaml": "YAML",
+      "cpp_header": "C++ Header (constexpr)"
+    },
+    "download": "Download",
+    "preview": "Preview",
+    "include_engine": "Include Engine Data",
+    "include_tire": "Include Tire Data"
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "theme": "Theme",
+    "themes": {
+      "light": "Light",
+      "dark": "Dark"
+    }
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "An error occurred.",
+    "success": "Success",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "close": "Close",
+    "unit": "Unit",
+    "value": "Value",
+    "parameter": "Parameter",
+    "description": "Description"
+  }
+}
