@@ -260,3 +260,8 @@ target_link_libraries(prof_fsae PRIVATE fsae_core)
 
 add_executable(prof_nn_tire src/prof_nn_tire.cpp)
 target_link_libraries(prof_nn_tire PRIVATE fsae_core)
+
+# AERO-PT: standalone physics checks registered with ctest (exit code != 0 on failure)
+if(BUILD_TESTS)
+    add_test(NAME engine_torque_checks COMMAND test_engine_torque)
+endif()
