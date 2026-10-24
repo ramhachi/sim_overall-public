@@ -22,6 +22,8 @@ addParameter(p, 'BranchToeTolerance', 0.05, @(x) isnumeric(x) && isscalar(x) && 
 addParameter(p, 'BranchCamberTolerance', deg2rad(2.0), @(x) isnumeric(x) && isscalar(x) && x > 0);
 addParameter(p, 'BranchKingpinTolerance', deg2rad(2.0), @(x) isnumeric(x) && isscalar(x) && x > 0);
 addParameter(p, 'ComplianceModel', struct(), @isstruct);
+% Z-down wheel-centre offsets for the 2D rack x travel steer map (#43); [] skips it.
+addParameter(p, 'SteerMapTravelSamples', [], @isnumeric);
 parse(p, varargin{:});
 opts = p.Results;
 eval_start = tic;
@@ -404,7 +406,52 @@ metrics.fsolve_calls = numel(travelSamples) + 2 * numel(travelSamples) ...
 metrics.solver_status.fsolve_calls = metrics.fsolve_calls;
 metrics.converged = travelConverged && steerConverged && rollConverged && ...
     rcConverged && travelBranchContinuous && steerBranchContinuous;
+if useClosedLink && ~isempty(opts.SteerMapTravelSamples)
+    metrics.steer_map = compute_steer_map(geom, rackSamples, opts.SteerMapTravelSamples, ...
+        opts.ResidualTolerance);
+    metrics.converged = metrics.converged && metrics.steer_map.converged;
+end
 metrics.elapsed_s = toc(eval_start);
+end
+
+function map = compute_steer_map(geom, rackSamples, travelOffsets, tol)
+% Wheel steer angle on a rack x wheel-travel grid from the closed-link solve
+% (#43). Bump steer (the rack = 0 column) is removed so that the runtime can
+% add toe_vs_travel without counting it twice. Rows sweep outward from the
+% rack centre for continuation.
+rack = sort(reshape(rackSamples, 1, []));
+dz = sort(reshape(travelOffsets, 1, []), 'descend');   % ascending compression
+nR = numel(rack);
+nT = numel(dz);
+steer = zeros(nT, nR);
+ok = true;
+[~, c] = min(abs(rack));
+rowGuess = [];
+for it = 1:nT
+    z = geom.W_C(3) + dz(it);
+    for order = {c:nR, c-1:-1:1}
+        guess = rowGuess;
+        for ir = order{1}
+            pose = solve_pose_for_rack(geom, rack(ir), z, guess, tol);
+            ok = ok && pose.converged;
+            if pose.converged
+                guess = pose.solver_vars;
+                if ir == c
+                    rowGuess = guess;
+                end
+            end
+            steer(it, ir) = pose.steer_angle;
+        end
+    end
+end
+bump = interp1(rack, steer.', 0.0).';
+map = struct( ...
+    'rack_travel_m', rack, ...
+    'wheel_travel_m', -dz, ...
+    'steer_rad', steer - bump, ...
+    'bump_steer_removed_rad', bump.', ...
+    'converged', ok, ...
+    'layout', 'steer_rad[i_wheel_travel][j_rack]');
 end
 
 function [values, converged, status] = sample_rc_with_heave(leftGeom, rightGeom, ...

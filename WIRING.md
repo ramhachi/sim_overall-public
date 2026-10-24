@@ -150,3 +150,43 @@ C++ changes:
   anti, compliance and samples are all tie-rod-constrained. A front corner with
   `source.model = a_arm_only_two_dof` is the pre-steering stage output and must
   not be used for toe (see #39 rule).
+
+## #43 steer map (`params.suspension.kc.steer_map`)
+
+```json
+"steer_map": {
+  "schema_version": "kc_steer_map/v1",
+  "rack_travel_m":  [nR],          // ascending, rack +Y moves both inner tie-rod points to +Y
+  "wheel_travel_m": [nT],          // ascending, compression-positive
+  "delta_L_rad": [[nR] x nT],      // row i = wheel_travel_m[i] of FL, col j = rack_travel_m[j]
+  "delta_R_rad": [[nR] x nT],      // same, FR travel
+  "rack_ratio_m_per_rad": 0.05,    // copy of steering.rack_ratio (rack m per handwheel rad)
+  "bump_steer": "removed (rack=0 column); add kinematics.toe_vs_travel separately"
+}
+```
+
+Steer angle = wheel yaw about Z (SAE: positive = nose right), excluding static toe.
+
+C++ (`vehicle_params.hpp`): parse into `Table2D steer_map_L, steer_map_R`
+(present only if all four arrays exist and sizes match; otherwise empty).
+
+C++ (`vehicle_14dof_new.hpp`), where `compute_ackermann_steering(delta, ackermann)`
+is called (front wheels only):
+
+```cpp
+if (!params_.suspension.steer_map_L.empty()) {
+    const double rack = handwheel_angle * params_.steering.rack_ratio;     // [m]
+    steer[FL] = steer_map_L.eval(susp_travel_from_eq[FL], rack);           // bilinear, clamped
+    steer[FR] = steer_map_R.eval(susp_travel_from_eq[FR], rack);
+    steer[RL] = steer[RR] = 0.0;
+} else {
+    steer = compute_ackermann_steering(delta_center, ackermann);           // legacy
+}
+```
+
+`handwheel_angle` is the driver input before `R_steer`; with the map present,
+`R_steer` and `steering.ackermann` are not used for the wheel angles (keep
+`R_steer` only for steering-torque feedback if needed). Toe from
+`toe_vs_travel` and compliance is still added on top (bump steer is not in the
+map). Two bilinear lookups per step, no solver. Use the previous-step travel
+(state) to avoid an algebraic loop.
