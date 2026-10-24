@@ -51,6 +51,7 @@ struct SimulationConfig {
     double output_rate = 0.01;         // [s] (10ms毎に出力)
     int laps = 1;                      // score-equivalent 用 multi-lap
     std::string eval_mode = "full";    // "full" or "fast"
+    bool allow_defaults = false;       // test/exploration: skip strict artifact validation (#2)
 
     // 車両性能パラメータ
     double max_lat_accel = 1.5 * 9.81;
@@ -506,6 +507,7 @@ struct LapResult {
     std::string degraded_reason = "";
     std::string track_source = "builtin";
     std::string track_csv_path = "";
+    std::string artifact_defaults = "";  // missing strict groups when --allow-defaults (#2)
     std::string tire_model_type = "tmeasy";
     std::string tire_model_name = "";
     std::string tire_runtime = "tmeasy";
@@ -1021,10 +1023,25 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
 
     // 2. 車両パラメータ読み込み
     vehicle::VehicleParams vehicle_params;
-    if (!config.params_json_str.empty()) {
-        vehicle_params = vehicle::VehicleParams::from_json_string(config.params_json_str);
-    } else if (!config.params_file.empty()) {
-        vehicle_params = vehicle::VehicleParams::from_json(config.params_file);
+    const bool loading_artifact = !config.params_json_str.empty() || !config.params_file.empty();
+    const bool strict_artifact = loading_artifact && !config.allow_defaults;
+    try {
+        if (!config.params_json_str.empty()) {
+            vehicle_params = vehicle::VehicleParams::from_json_string(config.params_json_str, strict_artifact);
+        } else if (!config.params_file.empty()) {
+            vehicle_params = vehicle::VehicleParams::from_json(config.params_file, strict_artifact);
+        }
+    } catch (const std::exception& e) {
+        throw DiagnosticFailure("strict_artifact_incomplete", e.what());
+    }
+    if (loading_artifact) {
+        const auto missing = vehicle_params.missing_required_groups();
+        for (size_t i = 0; i < missing.size(); ++i) {
+            result.artifact_defaults += (i ? "," : "") + missing[i];
+        }
+        if (!result.artifact_defaults.empty()) {
+            std::cerr << "[params] using defaults for: " << result.artifact_defaults << std::endl;
+        }
     }
     if (config.steering_driver_torque_max >= 0.0) {
         if (config.steering_driver_torque_max <= 0.0) {
@@ -3181,6 +3198,7 @@ int main(int argc, char** argv) {
         else if (arg == "--driver-capability-profile" && i + 1 < argc) config.driver_capability_profile_file = argv[++i];
         else if (arg == "--laps" && i + 1 < argc) config.laps = std::stoi(argv[++i]);
         else if (arg == "--output_json") config.output_json_result = true;
+        else if (arg == "--allow-defaults") config.allow_defaults = true;
         else if (arg == "--initial-speed" && i + 1 < argc) { config.initial_speed = std::stod(argv[++i]); config.initial_speed_explicit = true; }
         else if (arg == "--max-speed" && i + 1 < argc) config.max_speed = std::stod(argv[++i]);
         else if (arg == "--max-lat-accel" && i + 1 < argc) {
@@ -3375,6 +3393,7 @@ int main(int argc, char** argv) {
                   << ",\"degraded_reason\":\"" << escape_json_string(result.degraded_reason) << "\""
                   << ",\"track_source\":\"" << escape_json_string(result.track_source) << "\""
                   << ",\"track_csv_path\":\"" << escape_json_string(result.track_csv_path) << "\""
+                  << ",\"artifact_defaults\":\"" << escape_json_string(result.artifact_defaults) << "\""
                   << ",\"tire_model_type\":\"" << escape_json_string(result.tire_model_type) << "\""
                   << ",\"tire_model_name\":\"" << escape_json_string(result.tire_model_name) << "\""
                   << ",\"tire_runtime\":\"" << escape_json_string(result.tire_runtime) << "\""

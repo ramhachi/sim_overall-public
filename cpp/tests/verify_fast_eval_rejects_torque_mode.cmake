@@ -14,6 +14,7 @@ execute_process(
             --driver pid
             --eval-mode fast
             --params_file "${TORQUE_PARAMS}"
+            --allow-defaults
             --output_json
     WORKING_DIRECTORY "${SOURCE_ROOT}"
     RESULT_VARIABLE run_rc

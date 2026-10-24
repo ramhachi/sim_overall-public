@@ -365,6 +365,25 @@ TEST(CoreA_Tire, CamberedVerticalLoadProjectsToBodyPlane) {
     EXPECT_GT(std::abs(fy_tilted - fy_flat), 10.0);
 }
 
+// #2: strict artifact validation lists missing production groups.
+TEST(CoreA_Params, StrictArtifactValidation) {
+    const char* complete = R"({
+        "brake": {}, "mass": {"Iw": 0.5},
+        "tire": {"k_tire": 100000.0, "relaxation": {}},
+        "suspension": {"bump_stop_gap": 0.03,
+            "kc": {"front": {}, "rear": {}, "corners": {}}},
+        "powertrain": {"engine_rpm_points": [1000, 6000],
+                       "engine_torque_curve": [10, 20]}
+    })";
+    const auto ok = VehicleParams::from_json_string(complete, true);
+    EXPECT_TRUE(ok.missing_required_groups().empty());
+
+    const auto partial = VehicleParams::from_json_string(R"({"brake": {}})");
+    EXPECT_EQ(partial.missing_required_groups().size(), 6u);
+    EXPECT_THROW(VehicleParams::from_json_string(R"({"brake": {}})", true),
+                 std::runtime_error);
+}
+
 // #11: per-corner damper dyno LUT replaces the Bouc-Wen force and parses from JSON.
 TEST(CoreA_Damper, DynoLutIsPerCornerAndParsed) {
     VehicleParams p = VehicleParams::default_fsae();

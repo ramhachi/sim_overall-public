@@ -8,6 +8,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 #include <fstream>
+#include <set>
 #include <stdexcept>
 
 namespace fsae::vehicle {
@@ -377,11 +378,69 @@ struct VehicleParams {
     PowertrainParams powertrain;
     BrakeParams brake;
     AeroParams aero;
-    
+
+    /// Groups explicitly present in the source artifact (not serialized).
+    std::set<std::string> provided_groups;
+
+    /// Required production groups missing from the artifact (#2).
+    std::vector<std::string> missing_required_groups() const {
+        static const std::array<const char*, 7> required = {
+            "kc", "brake", "engine", "Iw", "k_tire", "relaxation", "bump_stop"};
+        std::vector<std::string> missing;
+        for (const char* key : required) {
+            if (provided_groups.find(key) == provided_groups.end()) missing.emplace_back(key);
+        }
+        return missing;
+    }
+
+    /// Production fail-fast (#2); tests/exploration pass strict=false.
+    void validate_strict() const {
+        const auto missing = missing_required_groups();
+        if (!missing.empty()) {
+            std::string list;
+            for (size_t i = 0; i < missing.size(); ++i) {
+                if (i) list += ", ";
+                list += missing[i];
+            }
+            throw std::runtime_error(
+                "strict vehicle artifact is missing required groups: " + list
+                + " (use --allow-defaults only for tests/exploration)");
+        }
+    }
+
     /// JSONオブジェクトからパース
     static void parse_json(const nlohmann::json& j, VehicleParams& p) {
         const nlohmann::json& config =
             (j.contains("params") && j["params"].is_object()) ? j["params"] : j;
+        p.provided_groups.clear();
+        if (config.contains("brake") && config["brake"].is_object()) p.provided_groups.insert("brake");
+        if (config.contains("mass") && config["mass"].is_object()
+            && config["mass"].contains("Iw")) p.provided_groups.insert("Iw");
+        if (config.contains("tire") && config["tire"].is_object()) {
+            const auto& tire = config["tire"];
+            if (tire.contains("k_tire")) p.provided_groups.insert("k_tire");
+            if (tire.contains("relaxation")) p.provided_groups.insert("relaxation");
+        }
+        if (config.contains("suspension") && config["suspension"].is_object()) {
+            const auto& susp = config["suspension"];
+            if (susp.contains("bump_stop_gap") || susp.contains("bump_stop_k")) {
+                p.provided_groups.insert("bump_stop");
+            }
+            if (susp.contains("kc") && susp["kc"].is_object()) {
+                const auto& kc = susp["kc"];
+                const bool corners = kc.contains("corners") && kc["corners"].is_object();
+                const bool axles = (kc.contains("front") && kc["front"].is_object())
+                                || (kc.contains("rear") && kc["rear"].is_object());
+                if (corners && axles) p.provided_groups.insert("kc");
+            }
+        }
+        if (config.contains("powertrain") && config["powertrain"].is_object()) {
+            const auto& pt = config["powertrain"];
+            if (pt.contains("engine_torque_curve") || pt.contains("engine_rpm_points")
+                || pt.contains("engine_torque_table")) {
+                p.provided_groups.insert("engine");
+            }
+        }
 
         auto load_vec3 = [](const nlohmann::json& src, std::array<double, 3>& dst) {
             if (src.is_array() && src.size() >= 3) {
@@ -897,7 +956,7 @@ struct VehicleParams {
     }
 
     /// JSONファイルから読み込み
-    static VehicleParams from_json(const std::string& filepath) {
+    static VehicleParams from_json(const std::string& filepath, bool strict = false) {
         VehicleParams p;
         std::ifstream file(filepath);
         if (!file.is_open()) {
@@ -907,14 +966,16 @@ struct VehicleParams {
         nlohmann::json j;
         file >> j;
         parse_json(j, p);
+        if (strict) p.validate_strict();
         return p;
     }
 
     /// JSON文字列から読み込み
-    static VehicleParams from_json_string(const std::string& json_str) {
+    static VehicleParams from_json_string(const std::string& json_str, bool strict = false) {
         VehicleParams p;
         auto j = nlohmann::json::parse(json_str);
         parse_json(j, p);
+        if (strict) p.validate_strict();
         return p;
     }
     
