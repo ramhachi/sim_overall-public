@@ -235,6 +235,9 @@ struct TireParams {
     double c_tire = 500.0;      // タイヤ垂直減衰 [Ns/m]
     double dmu_dFz = -0.0001;   // 荷重感度 [1/N]
     double pneumatic_trail = 0.03; // SAT近似用空気トレール [m]
+    // 転がり抵抗係数 [-]（#12）。既定 0.015 は乗用/レーシングタイヤの舗装路典型値
+    // 0.010-0.020（Gillespie, Fundamentals of Vehicle Dynamics, ch.4）。実測コーストダウンで置換すること
+    double C_rr = 0.015;
 #ifdef FSAE_TEST_TIRE_MODEL_TYPE
     std::string model_type = FSAE_TEST_TIRE_MODEL_TYPE; // test-only TMeasy fallback
 #else
@@ -604,6 +607,7 @@ struct VehicleParams {
             if (t.contains("c_tire")) p.tire.c_tire = t["c_tire"];
             if (t.contains("dmu_dFz")) p.tire.dmu_dFz = t["dmu_dFz"];
             if (t.contains("pneumatic_trail")) p.tire.pneumatic_trail = t["pneumatic_trail"];
+            if (t.contains("C_rr")) p.tire.C_rr = t["C_rr"];
             if (t.contains("model_type")) p.tire.model_type = t["model_type"];
             if (t.contains("model_dir")) p.tire.model_dir = t["model_dir"];
             if (t.contains("model_manifest")) p.tire.model_manifest = t["model_manifest"];

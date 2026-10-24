@@ -138,7 +138,7 @@ public:
     void set_initial_velocity(double vx) {
         state_.vx = vx;
         for (int i = 0; i < 4; ++i) {
-            state_.omega[i] = vx / params_.tire.radius;
+            state_.omega[i] = vx / compute_effective_rolling_radius(static_Fz_[i] + params_.mass.m_unsprung[i] * 9.81);
         }
         invalidate_pinn_force_cache();
         capture_pinn_cache_state_snapshot();
@@ -246,7 +246,7 @@ public:
                 double s = std::sin(steer[i]);
                 double vx_wheel = c * vx_contact + s * vy_contact;
                 double vy_wheel = -s * vx_contact + c * vy_contact;
-                double omega_r = state_.omega[i] * params_.tire.radius;
+                double omega_r = state_.omega[i] * compute_effective_rolling_radius(tire_Fz_[i]);
                 
                 slip_info[i].vsx = vx_wheel - omega_r;
                 slip_info[i].vsy = vy_wheel;
@@ -606,17 +606,29 @@ private:
         pinn_cache_state_snapshot_valid_ = true;
     }
 
+    /// TTC -> vehicle convention is a Y mirror: Fy, Mx and Mz all flip (#12 adds Mx).
+    physics::tire::TireForces to_vehicle_convention(physics::tire::TireForces forces) const {
+        if (params_.tire.pinn_ttc_lateral_sign) {
+            forces.Fy = -forces.Fy;
+            forces.Mx = -forces.Mx;
+            forces.Mz = -forces.Mz;
+        }
+        return forces;
+    }
+
+    /// 有効転がり半径 Re = R0 - Fz/(3*k_tire)（#12）。ラジアルタイヤでは Re が無負荷半径から
+    /// 静的たわみの約 1/3 だけ減る（Pacejka, Tire and Vehicle Dynamics §1.x の近似）。
+    /// ponytail: analytic fit, replace with a TTC RL/RE LUT (tire_fitting/data_loader.py).
+    double compute_effective_rolling_radius(double Fz) const {
+        return params_.tire.radius - std::max(Fz, 0.0) / (3.0 * params_.tire.k_tire);
+    }
+
     physics::tire::TireForces evaluate_pinn_tire_force(
         int wheel_index,
         const physics::tire::TireInput& input) const {
         const double eval_rate_hz = params_.tire.pinn_eval_rate_hz;
         if (eval_rate_hz <= 0.0) {
-            auto forces = nn_tire_model_.predict(input, false);
-            if (params_.tire.pinn_ttc_lateral_sign) {
-                forces.Fy = -forces.Fy;
-                forces.Mz = -forces.Mz;
-            }
-            return forces;
+            return to_vehicle_convention(nn_tire_model_.predict(input, true));
         }
 
         const double interval = 1.0 / eval_rate_hz;
@@ -627,12 +639,7 @@ private:
             !pinn_force_cache_valid_[wheel_index] ||
             sample_time > pinn_force_cache_time_[wheel_index] + time_tolerance;
         if (sample_due) {
-            auto forces = nn_tire_model_.predict(input, false);
-            if (params_.tire.pinn_ttc_lateral_sign) {
-                forces.Fy = -forces.Fy;
-                forces.Mz = -forces.Mz;
-            }
-            pinn_force_cache_[wheel_index] = forces;
+            pinn_force_cache_[wheel_index] = to_vehicle_convention(nn_tire_model_.predict(input, true));
             pinn_force_cache_time_[wheel_index] = sample_time;
             pinn_force_cache_valid_[wheel_index] = true;
         }
@@ -1238,6 +1245,8 @@ private:
         std::array<double, 4> tire_Mz_stage = {0.0, 0.0, 0.0, 0.0};
         std::array<double, 4> Fz_tire, susp_travel, dz_bw, dz_lugre;
         std::array<double, 4> susp_travel_from_eq_arr = {0.0, 0.0, 0.0, 0.0};
+        std::array<double, 4> R_eff{};
+        std::array<double, 4> tire_Mx_stage = {0.0, 0.0, 0.0, 0.0};
 
         for (int i = 0; i < 4; ++i) {
             // 各輪が「見る」ロール角（フレームねじりを考慮）
@@ -1306,6 +1315,7 @@ private:
             if (update_cache) {
                 tire_Fz_[i] = Fz_tire[i];
             }
+            R_eff[i] = compute_effective_rolling_radius(Fz_tire[i]);
             
             // タイヤ滑り計算（完全な座標変換）
             // ガイド §2.4: 車体系 → サスペンション系 → ホイール系 → タイヤ接地点系
@@ -1354,7 +1364,7 @@ private:
                 double vx_wheel = v_wheel_vec.x();
                 double vy_wheel = v_wheel_vec.y();
                 
-                double omega_r = state.omega[i] * params_.tire.radius;
+                double omega_r = state.omega[i] * R_eff[i];
                 double vsx = vx_wheel - omega_r;
                 double vsy = vy_wheel;
                 double vcx = std::abs(omega_r);
@@ -1412,6 +1422,7 @@ private:
                     tire_Fx_stage[i] = nn_forces.Fx;
                     tire_Fy_stage[i] = nn_forces.Fy;
                     tire_Mz_stage[i] = nn_forces.Mz;
+                    tire_Mx_stage[i] = nn_forces.Mx;
 
                 } else if (mf_model_loaded_) {
                     // === Magic Formula タイヤモデル (with Relaxation Length) ===
@@ -1504,7 +1515,7 @@ private:
                     dxdt(28 + i) = tire_out.deta_dt;
                 }
 
-                kc_loads = {tire_Fx_stage[i], tire_Fy_stage[i], Fz_tire[i], 0.0, 0.0, tire_Mz_stage[i]};
+                kc_loads = {tire_Fx_stage[i], tire_Fy_stage[i], Fz_tire[i], tire_Mx_stage[i], 0.0, tire_Mz_stage[i]};
             }
 
             if (update_cache) {
@@ -1550,7 +1561,9 @@ private:
         const auto body_moments = compute_body_moment_contributions(
             wheel_pos, Fx_wheel, Fy_wheel, F_susp_each,
             roll_moment_arm, pitch_moment_arm, tire_Mz_stage);
-        double Mx_total = body_moments.Mx;
+        // Tyre overturning moment is reacted through the suspension into the body (#12).
+        double Mx_total = body_moments.Mx + tire_Mx_stage[0] + tire_Mx_stage[1]
+                        + tire_Mx_stage[2] + tire_Mx_stage[3];
         double My_total = body_moments.My;
         double Mz_total = body_moments.Mz;
         
@@ -1664,7 +1677,6 @@ private:
         dxdt(10) = (My_total - gyro_pitch - coupling_pitch) / Iyy;
         
         // ======== 車輪回転 ========
-        double R_tire = params_.tire.radius;
         
         // 後輪平均回転数からエンジンRPMを計算
         double omega_rear_avg = (state.omega[RL] + state.omega[RR]) / 2.0;
@@ -1711,11 +1723,15 @@ private:
             // ponytail: viscous near ω=0 (creeps under a net torque), add stick clamp if hill holds matter.
             double T_brake = -T_brake_max[i] * std::tanh(state.omega[i] / params_.brake.omega_smooth);
 
-            // タイヤ座標系の縦力を直接使用
-            double T_tire = -tire_Fx_stage[i] * R_tire;
+            // タイヤ座標系の縦力を直接使用（有効転がり半径, #12）
+            double T_tire = -tire_Fx_stage[i] * R_eff[i];
+
+            // 転がり抵抗モーメント（#12）
+            constexpr double omega_rr = 0.5;  // [rad/s] smoothing through zero speed
+            double T_rr = -params_.tire.C_rr * Fz_tire[i] * R_eff[i] * std::tanh(state.omega[i] / omega_rr);
 
             const double Iw_i = (params_.mass.Iw_corner[i] > 0.0) ? params_.mass.Iw_corner[i] : params_.mass.Iw;
-            dxdt(20 + i) = (T_drive + T_brake + T_tire) / (Iw_i + (i >= RL ? I_reflected_rear : 0.0));
+            dxdt(20 + i) = (T_drive + T_brake + T_tire + T_rr) / (Iw_i + (i >= RL ? I_reflected_rear : 0.0));
         }
         
         // ======== フレームねじりダイナミクス（Phase A1）========

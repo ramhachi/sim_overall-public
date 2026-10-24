@@ -69,7 +69,8 @@ TEST(CoreAReport, KeyNumbers) {
 
 // #3: planar EOM uses the full vehicle mass. In steady cornering vx*r = sum(Fy)/m_total.
 TEST(CoreA_Mass, SkidpadLateralAccelUsesTotalMass) {
-    const VehicleParams p = VehicleParams::default_fsae();
+    VehicleParams p = VehicleParams::default_fsae();
+    p.tire.C_rr = 0.0;  // keep the coast steady so dvy/dt ~ 0
     Vehicle14DOF_New veh(p);
     veh.set_initial_velocity(12.0);
     DriverInput in;
@@ -275,4 +276,37 @@ TEST(CoreA_Driveline, ReflectedInertiaAndShiftCut) {
     const auto parsed = VehicleParams::from_json_string("{\"mass\": {\"Iw\": [0.3, 0.3, 0.5, 0.5]}}");
     EXPECT_DOUBLE_EQ(parsed.mass.Iw_corner[3], 0.5);
     EXPECT_DOUBLE_EQ(parsed.mass.Iw, 0.4);
+}
+
+namespace {
+double coast_decel(double c_rr) {
+    VehicleParams p = VehicleParams::default_fsae();
+    p.tire.C_rr = c_rr;
+    Vehicle14DOF_New veh(p);
+    veh.set_initial_velocity(15.0);
+    DriverInput in;
+    in.gear = 3;
+    for (int k = 0; k < 500; ++k) veh.step(0.001, in);
+    const double v0 = veh.state().vx;
+    for (int k = 0; k < 500; ++k) veh.step(0.001, in);
+    return (v0 - veh.state().vx) / 0.5;
+}
+}  // namespace
+
+// #12: rolling resistance ~ C_rr*W shows up as extra coast-down deceleration,
+// and a free-rolling wheel has kappa ~ 0 against the effective rolling radius.
+TEST(CoreA_Tire, RollingResistanceAndEffectiveRadius) {
+    const VehicleParams p = VehicleParams::default_fsae();
+    const double extra = coast_decel(0.015) - coast_decel(0.0);
+    EXPECT_NEAR(extra, 0.015 * 9.81, 0.25 * 0.015 * 9.81);
+
+    Vehicle14DOF_New veh(p);
+    veh.set_initial_velocity(15.0);
+    DriverInput in;
+    in.gear = 3;
+    for (int k = 0; k < 500; ++k) veh.step(0.001, in);
+    const double Fz = veh.get_tire_Fz()[0];
+    const double Re = p.tire.radius - Fz / (3.0 * p.tire.k_tire);
+    const double kappa = (veh.state().omega[0] * Re - veh.state().vx) / veh.state().vx;
+    EXPECT_LT(std::abs(kappa), 2e-3);
 }
