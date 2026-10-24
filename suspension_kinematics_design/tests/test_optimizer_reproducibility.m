@@ -33,6 +33,11 @@ try
         assert(strcmp(contract.weight_policy, 'tolerance_normalized'));
         assert(isfield(contract, 'tolerances'));
         assert(isfield(contract, 'targets'));
+        % #39: targets carry source tags; kc.provenance summarises corners.
+        sg_targets = data.params.suspension_geometry.front.targets;
+        assert(ischar(sg_targets.sources.kpi_deg) && islogical(sg_targets.provisional.kpi_deg));
+        assert(strcmp(data.params.suspension.kc.provenance.schema_version, 'kc_provenance/v1'));
+        assert(~data.params.suspension.kc.provenance.production_ready);
         if k == 1
             corners = data.params.suspension.kc.corners;
             assert(~isfield(corners.FL.hardpoints, 'tie_rod_inner'));

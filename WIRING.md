@@ -190,3 +190,50 @@ if (!params_.suspension.steer_map_L.empty()) {
 `toe_vs_travel` and compliance is still added on top (bump steer is not in the
 map). Two bilinear lookups per step, no solver. Use the previous-step travel
 (state) to avoid an algebraic loop.
+
+## #39 provenance / validity rule
+
+Every corner block written by the KC stages carries:
+
+```json
+"quality": {"verdict": "valid"|"provisional"|"invalid", "confidence": "medium"|"low", "reasons": [..]},
+"evaluation_scope": {"travel","roll","steering","tie_rod","toe","roll_steer","anti","jacking","compliance","sample_values"},
+       // values: "evaluated" | "not_evaluated" | "not_applicable" | "proxy_not_validated"
+       //         | "model_default_stiffness" | "model_supplied_stiffness"
+"source": {"model": "a_arm_plus_tie_rod_closed_link"|"a_arm_only_two_dof", "script": "...", "tie_rod_model": "...", "updated_at": "..."}
+```
+
+and `params.suspension.kc.provenance` (rebuilt on every save):
+
+```json
+"provenance": {
+  "schema_version": "kc_provenance/v1",
+  "corners": {"FL": {"verdict","confidence","reasons","model","script","evaluation_scope"}, ...},
+  "missing_corners": ["RL", ...],
+  "production_ready": false,            // all four corners present and verdict == "valid"
+  "compliance_provisional": true,
+  "target_confidence": {"front": "low", "rear": "low"}
+}
+```
+
+`suspension_geometry.<front|rear>.targets` now has `sources.<field>` (string,
+e.g. `fallback_default_requires_design_target`) and `provisional.<field>` (bool)
+next to every target value.
+
+C++ parse rule (`vehicle_params.hpp`, `kc.corners` loop):
+1. Parse `quality.verdict` (string, default `"unknown"`), each
+   `evaluation_scope.*` (string, default `"not_evaluated"`) and `source.model`.
+2. `dst.valid = (verdict == "valid")`. Do not set `valid` from key presence.
+3. Per-curve presence instead of the all-zero sentinel (`is_zero_polynomial`):
+   `has_camber_vs_travel = scope.travel == "evaluated"`,
+   `has_toe = scope.toe == "evaluated"`, `has_steer = scope.steering == "evaluated"`,
+   `has_roll = scope.roll == "evaluated"`; use the curve iff its flag is true
+   (a genuinely zero curve is then honoured). Legacy artifacts without
+   `evaluation_scope`: keep today's sentinel behaviour.
+4. Production mode (e.g. a `strict_kc` flag, default true for production
+   runs): if any corner has `verdict != "valid"` or
+   `provenance.production_ready == false`, throw with the corner name and
+   `reasons`; with the explicit override flag, log a warning per corner and
+   continue using only the curves whose scope is `"evaluated"`.
+5. `jacking` / `compliance` scopes other than `"evaluated"` are labelled
+   proxies: apply them, but log once (they are not part of `verdict`).

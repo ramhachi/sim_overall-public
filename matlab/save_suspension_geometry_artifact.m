@@ -61,6 +61,8 @@ if ~isempty(fieldnames(opts.SuspensionGeometry))
     params.suspension_geometry = merge_nested_structs(params.suspension_geometry, opts.SuspensionGeometry);
 end
 
+params = attach_kc_provenance(params);
+
 stageEntry = struct();
 stageEntry.name = char(opts.StageName);
 stageEntry.optimizer = char(opts.StageOptimizer);
@@ -106,6 +108,70 @@ result.backup_path = backupPath;
 result.in_place = samePath;
 result.updated_existing_artifact = ~isempty(baseArtifactPath) && isfile(baseArtifactPath);
 result.params = params;
+end
+
+function params = attach_kc_provenance(params)
+% Rebuild params.suspension.kc.provenance from every corner present (#39), so
+% the C++ loader can gate on one block instead of mere key presence.
+if ~isfield(params, 'suspension') || ~isfield(params.suspension, 'kc') ...
+        || ~isfield(params.suspension.kc, 'corners')
+    return;
+end
+corners = params.suspension.kc.corners;
+names = {'FL', 'FR', 'RL', 'RR'};
+prov = struct('schema_version', 'kc_provenance/v1', ...
+    'updated_at', datestr(now, 'yyyy-mm-dd HH:MM:SS'), 'corners', struct());
+missing = {};
+allValid = true;
+complianceProvisional = false;
+for i = 1:numel(names)
+    wn = names{i};
+    if ~isfield(corners, wn)
+        missing{end + 1} = wn; %#ok<AGROW>
+        allValid = false;
+        continue;
+    end
+    c = corners.(wn);
+    entry = struct('verdict', 'unknown', 'confidence', 'unknown', 'reasons', {{}}, ...
+        'model', 'unknown', 'script', 'unknown', 'evaluation_scope', struct());
+    if isfield(c, 'quality')
+        entry.verdict = getfield_or(c.quality, 'verdict', 'unknown');
+        entry.confidence = getfield_or(c.quality, 'confidence', 'unknown');
+        entry.reasons = getfield_or(c.quality, 'reasons', {});
+    end
+    if isfield(c, 'source')
+        entry.model = getfield_or(c.source, 'model', 'unknown');
+        entry.script = getfield_or(c.source, 'script', 'unknown');
+    end
+    if isfield(c, 'evaluation_scope')
+        entry.evaluation_scope = c.evaluation_scope;
+    end
+    if isfield(c, 'compliance') && isfield(c.compliance, 'provisional')
+        complianceProvisional = complianceProvisional || logical(c.compliance.provisional);
+    end
+    allValid = allValid && strcmp(entry.verdict, 'valid');
+    prov.corners.(wn) = entry;
+end
+prov.missing_corners = missing;
+prov.production_ready = allValid;
+prov.compliance_provisional = complianceProvisional;
+prov.target_confidence = struct();
+for axleKey = {'front', 'rear'}
+    a = axleKey{1};
+    if isfield(params, 'suspension_geometry') && isfield(params.suspension_geometry, a) ...
+            && isfield(params.suspension_geometry.(a), 'target_contract')
+        prov.target_confidence.(a) = params.suspension_geometry.(a).target_contract.quality.confidence;
+    end
+end
+params.suspension.kc.provenance = prov;
+end
+
+function v = getfield_or(s, name, default)
+if isfield(s, name)
+    v = s.(name);
+else
+    v = default;
+end
 end
 
 function tf = paths_refer_to_same_file(pathA, pathB)
