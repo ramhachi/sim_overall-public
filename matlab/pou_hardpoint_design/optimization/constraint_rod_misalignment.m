@@ -67,8 +67,8 @@ function [c, ceq] = constraint_rod_misalignment(design_vars, geom, delta_range)
         IR = max(abs(valid_mr));
     end
 
-    c(4) = 0.03 - IR;
-    c(5) = IR - 1.50;    % relaxed from 0.80 to allow convergence for aggressive targets
+    c(4) = -IR;          % true d(damper)/d(travel) must be non-negative
+    c(5) = IR - 2.00;
 
     % 4. Maximum distance from Wheel Center to upright pushrod node (M-pivot)
     % Use the midpoint of the two ball joints as the "wheel center" proxy for this check.

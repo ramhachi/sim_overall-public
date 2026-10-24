@@ -22,6 +22,12 @@ function cost = objective_polynomial_fit(design_vars, geom, target_poly, delta_r
     % and the runtime uses the K&C camber path (#44, #17).
     w_jack = 1.0;    % Jack/damper error weight [mm]
     w_camber = 0.0;  % Camber is not a POU design variable
+    w_mr = 5.0;      % Motion-ratio objective weight
+    if isfield(geom, 'target_motion_ratio')
+        target_mr = geom.target_motion_ratio;
+    else
+        target_mr = 0.50;
+    end
 
     % Compute geometric curves from hardpoint coordinates
     [jack_curve, camber_curve, ~] = forward_kinematics(design_vars, geom, delta_range);
@@ -45,8 +51,20 @@ function cost = objective_polynomial_fit(design_vars, geom, target_poly, delta_r
     max_jack = max(abs(jack_error_mm));
     rms_camber = sqrt(mean(camber_error_deg.^2));
 
+    % True d(damper)/d(wheel travel) at the nominal point (#44).
+    mr_lut = solve_pou_closed_chain(geom, design_vars, struct( ...
+        'travel_m', [-0.001; 0.0; 0.001], 'rack_m', 0.0, ...
+        'residual_tolerance', 1e-4));
+    valid_mr = mr_lut.mr(isfinite(mr_lut.mr));
+    if isempty(valid_mr)
+        mr_error = target_mr;
+    else
+        mr_error = abs(max(abs(valid_mr)) - target_mr);
+    end
+
     % Weighted cost (70% RMS, 30% Max Error to prevent edge drooping)
-    cost = w_jack * (0.7 * rms_jack + 0.3 * max_jack) + w_camber * rms_camber;
+    cost = w_jack * (0.7 * rms_jack + 0.3 * max_jack) ...
+         + w_camber * rms_camber + w_mr * mr_error;
 
     % Debug output (optional - comment out for production)
     % fprintf('  Jack RMS: %.2f mm, Camber RMS: %.2f deg, Cost: %.2f\n', ...
