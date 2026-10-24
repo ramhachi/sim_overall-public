@@ -304,6 +304,10 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
         end
     end
     
+    % Strength (#50): yield (von Mises / welded Sy) and Euler buckling over the
+    % strength cases (the torsion case is a stiffness test, not a load).
+    [strength_penalty, strength_report] = strengthPenalty(case_results, element_materials, materials, config);
+
     % 4. Calculate Objective
     W_mass = config.W_mass;
     mass_ref = config.mass_ref;
@@ -394,7 +398,8 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
         end
         obj_val = W_mass * f_mass + W_cg * f_cg + P_stiff + P_mass_target ...
             + material_penalty + geometry_penalty + cg_penalty + total_excl_penalty ...
-            + sparsity_penalty + compliance_penalty + cheap_penalty + case_displacement_penalty;
+            + sparsity_penalty + compliance_penalty + cheap_penalty + case_displacement_penalty ...
+            + strength_penalty;
     end
     
     % 5. Collect detailed results
@@ -413,6 +418,8 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
     results.geometry_precheck_penalty = cheap_penalty;
     results.geometry_precheck_report = cheap_report;
     results.case_displacement_penalty = case_displacement_penalty;
+    results.strength_penalty = strength_penalty;
+    results.strength_report = strength_report;
     results.load_case_results = case_results;
     results.design_schema_version = design.schema_version;
     results.solver_backend = resolveObjectiveSolverBackend(config);
@@ -461,7 +468,8 @@ function [primary_result, case_results, displacement_penalty, success] = solveOb
     end
 
     case_results = struct('name', {}, 'success', {}, 'K_torsion', {}, 'mass', {}, ...
-        'max_translation_m', {}, 'loads', {}, 'bcs', {}, 'error', {}, 'source', {});
+        'max_translation_m', {}, 'loads', {}, 'bcs', {}, 'error', {}, 'source', {}, ...
+        'stress_max', {}, 'buckling_ratio', {}, 'element_stress_vm', {}, 'element_buckling_ratio', {});
     displacement_penalty = 0;
     max_allowed = getConfigField(config, 'case_max_displacement_m', 0.025);
     primary_result = struct('mass', NaN, 'K_torsion', NaN, 'success', false);
@@ -493,6 +501,10 @@ function [primary_result, case_results, displacement_penalty, success] = solveOb
         case_results(ci).bcs = load_cases(ci).bcs;
         case_results(ci).error = '';
         case_results(ci).source = '';
+        case_results(ci).stress_max = getConfigField(result, 'stress_max', NaN);
+        case_results(ci).buckling_ratio = getConfigField(result, 'buckling_ratio', NaN);
+        case_results(ci).element_stress_vm = getConfigField(result, 'element_stress_vm', []);
+        case_results(ci).element_buckling_ratio = getConfigField(result, 'element_buckling_ratio', []);
         if isfield(load_cases, 'source') && ~isempty(load_cases(ci).source)
             case_results(ci).source = load_cases(ci).source;
         end
@@ -556,6 +568,31 @@ function available = ensureNativeMexOnPath()
     end
     solver_path = which('beam_fem_solver');
     available = ~isempty(solver_path) && contains(solver_path, ['.' mexext]);
+end
+
+function [penalty, report] = strengthPenalty(case_results, element_materials, materials, config)
+    Sy = nan(numel(element_materials), 1);
+    for i = 1:numel(element_materials)
+        if ~isempty(element_materials{i})
+            Sy(i) = materials.(element_materials{i}).Sy_welded_MPa;  % joints are welded/bonded
+        end
+    end
+    gamma_yield = getConfigField(config, 'gamma_yield', 50);
+    gamma_buckling = getConfigField(config, 'gamma_buckling', 50);
+    penalty = 0;
+    report = struct('max_yield_utilization', 0, 'max_buckling_ratio', 0);
+    for c = case_results
+        if strcmp(c.name, 'torsion') || isempty(c.element_stress_vm)
+            continue;
+        end
+        util = c.element_stress_vm(:) ./ Sy;
+        util(isnan(util)) = 0;
+        buck = c.element_buckling_ratio(:);
+        penalty = penalty + gamma_yield * sum(max(0, util - 1).^2) ...
+            + gamma_buckling * sum(max(0, buck - 1).^2);
+        report.max_yield_utilization = max(report.max_yield_utilization, max(util));
+        report.max_buckling_ratio = max(report.max_buckling_ratio, max(buck));
+    end
 end
 
 function elements_fem = appendShearAreas(elements_fem)

@@ -1,4 +1,12 @@
 {
+  "rulebook_baseline": {
+    "id": "rulebook_baseline",
+    "E_GPa": 200.0,
+    "Sy_welded_MPa": 305.0,
+    "Su_welded_MPa": 365.0,
+    "is_steel": true,
+    "comment": "FSAE F.3.4.2 baseline steel properties used for SES/equivalency (welded values). Verify against the current rulebook before each season."
+  },
   "materials": [
     {
       "id": "AISI4130",

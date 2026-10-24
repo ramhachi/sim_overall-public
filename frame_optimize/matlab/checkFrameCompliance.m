@@ -305,23 +305,20 @@ function [material_id, material_data] = inferMaterialFromElasticModulus(E_GPa, m
     material_data = materials.(material_id);
 end
 
-function [steel_id, steel_mat] = steelReferenceMaterial(materials)
-    names = fieldnames(materials);
-    steel_id = '';
-    for i = 1:numel(names)
-        mat = materials.(names{i});
-        if isfield(mat, 'is_steel') && mat.is_steel
-            steel_id = names{i};
-            steel_mat = mat;
-            if strcmp(names{i}, 'AISI4130')
-                return;
-            end
+function [steel_id, steel_mat] = steelReferenceMaterial(~)
+    % SES equivalence is measured against the rulebook baseline steel (F.3.4.2),
+    % not against the team's 4130 data (#50).
+    persistent baseline
+    if isempty(baseline)
+        raw = jsondecode(fileread(fullfile(fileparts(mfilename('fullpath')), '..', 'data', 'materials.json')));
+        if ~isfield(raw, 'rulebook_baseline')
+            error('checkFrameCompliance:MissingRulebookBaseline', ...
+                'data/materials.json needs a "rulebook_baseline" entry (F.3.4.2).');
         end
+        baseline = raw.rulebook_baseline;
     end
-    if isempty(steel_id)
-        error('checkFrameCompliance:MissingSteelReference', ...
-            'A steel reference material is required for size equivalence checks.');
-    end
+    steel_id = baseline.id;
+    steel_mat = baseline;
 end
 
 function [is_compliant, deficiency] = isTubeSizeCompliant( ...

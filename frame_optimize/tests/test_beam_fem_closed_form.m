@@ -44,4 +44,13 @@ theta = T*L/(G*1e9*J);
 assert(abs(r.U(3, 4) - theta) / theta < 1e-9, 'Round tube twist');
 assert(abs(r.K_torsion - T/rad2deg(theta)) / (T/rad2deg(theta)) < 1e-9, 'Round tube K_torsion');
 
+% 3. Stress recovery (#50): root bending sigma = P L c / I, Euler ratio in compression
+L = 0.5;
+nodes = [0 0 0; 0 L 0];
+r = beam_fem_solver(nodes, row(1, 2), clamp, [2 3 P]);
+assert(abs(r.stress_max - P*L*1e3*(D/2)/p.Iy_mm4) / r.stress_max < 1e-9, 'Root bending stress');
+assert(isequal(size(r.element_forces), [1 12]), 'element_forces must be Mx12');
+r = beam_fem_solver(nodes, row(1, 2), clamp, [2 2 -P]);
+assert(abs(r.buckling_ratio - P/(pi^2*E*1e9*I/L^2)) / r.buckling_ratio < 1e-9, 'Euler buckling ratio');
+
 fprintf('Beam FEM closed-form benchmarks OK\n');

@@ -9,11 +9,13 @@
  * Input JSON:
  * {
  *   "nodes": [[x,y,z], ...],                                   // m
- *   "elements": [[ni, nj, D, t, E, G, rho, shape, jf, kAy, kAz], ...],
+ *   "elements": [[ni, nj, D, t, E, G, rho, shape, jf, kAy, kAz, off_i, off_j], ...],
  *   "bcs": [[node, dof, value], ...],                          // 1-indexed
  *   "loads": [[node, dof, value], ...]
  * }
- * Output JSON: {"success", "U": [[ux,uy,uz,rx,ry,rz], ...], "K_torsion", "mass", "warnings"?}
+ * Output JSON: {"success", "U": [[ux,uy,uz,rx,ry,rz], ...], "K_torsion", "mass",
+ *               "element_forces": Mx12 local end forces, "element_stress_vm" [MPa],
+ *               "stress_max" [MPa], "element_buckling_ratio", "buckling_ratio", "warnings"?}
  */
 
 #include <nlohmann/json.hpp>
@@ -126,6 +128,28 @@ int run_selftest() {
         const double df = P * Lf * Lf * Lf / (3 * EI) + P * b * Lf * Lf / (2 * EI) + P * Lf / (Gp * kA);
         const double tf = P * Lf * Lf / (2 * EI) + P * b * Lf / EI;
         check("rigid end offsets cantilever tip", fo::solve_json(in)["U"][1][2].get<double>(), df + b * tf, 1e-6);
+    }
+
+    {   // 6. stress recovery: root bending sigma = P L c / I, torsion vm = sqrt(3) T c / J,
+        //    Euler ratio = P / (pi^2 E I / L^2) under compression
+        const double L = 0.5, c = D / 2;
+        json in = cantilever({0, 1, 0}, L, 1, round);
+        in["loads"].push_back({2, 3, P});
+        const json out = fo::solve_json(in);
+        check("root bending stress [MPa]", out["stress_max"].get<double>(), P * L * 1e3 * c / sec.Iy, 1e-9);
+        check("root moment in element_forces [N*m]", std::hypot(out["element_forces"][0][4].get<double>(),
+              out["element_forces"][0][5].get<double>()), P * L, 1e-9);
+
+        json tor = cantilever({1, 0, 0}, L, 1, round);
+        tor["loads"].push_back({2, 4, 100.0});
+        check("torsion von Mises [MPa]", fo::solve_json(tor)["stress_max"].get<double>(),
+              std::sqrt(3.0) * 100.0e3 * c / sec.J, 1e-9);
+
+        json comp = cantilever({0, 1, 0}, L, 1, round);
+        comp["loads"].push_back({2, 2, -P});
+        const json cout_ = fo::solve_json(comp);
+        check("Euler buckling ratio", cout_["buckling_ratio"].get<double>(), P / (fo::kPi * fo::kPi * Ep * I / (L * L)), 1e-9);
+        check("axial stress [MPa]", cout_["stress_max"].get<double>(), P / sec.A, 1e-6);
     }
 
     std::cout << (g_failures ? "SELFTEST FAILED" : "SELFTEST PASSED") << " (" << g_failures << " failures)\n";

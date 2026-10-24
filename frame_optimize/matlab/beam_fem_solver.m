@@ -143,6 +143,11 @@ function result = beam_fem_solver(nodes, elements, bcs, loads, options)
     end
 
     result.U = U;
+    for extra = {'element_forces', 'element_stress_vm', 'stress_max', 'element_buckling_ratio', 'buckling_ratio', 'warnings'}
+        if isfield(output_json, extra{1})
+            result.(extra{1}) = output_json.(extra{1});
+        end
+    end
 end
 
 function out_cell = force2D(mat)

@@ -15,7 +15,9 @@
  *   loads    - Lx3 double [node_id, dof, value], dof 1-6 (Fx, Fy, Fz, Mx, My, Mz)
  *   options  - struct (optional, currently unused)
  *
- * Output struct: U (Nx6), K_torsion [Nm/deg], mass [kg], success
+ * Output struct: U (Nx6), K_torsion [Nm/deg], mass [kg], success,
+ *   element_forces (Mx12, local end forces at the flexible ends [Fx Fy Fz Mx My Mz]_i,_j in N, N*m),
+ *   element_stress_vm (Mx1, MPa), stress_max (MPa), element_buckling_ratio (Mx1, N/P_cr), buckling_ratio
  */
 
 #include "mex.h"
@@ -37,6 +39,12 @@ static std::vector<fo::FemLoad> read_triples(const mxArray* a) {
         out.push_back({static_cast<int>(p[r]) - 1, static_cast<int>(p[r + m]) - 1, p[r + 2 * m]});
     }
     return out;
+}
+
+static mxArray* to_mx(const Eigen::MatrixXd& m) {  // Eigen and MATLAB are both column-major
+    mxArray* a = mxCreateDoubleMatrix(m.rows(), m.cols(), mxREAL);
+    std::copy(m.data(), m.data() + m.size(), mxGetPr(a));
+    return a;
 }
 
 void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
@@ -78,8 +86,9 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
         mexWarnMsgIdAndTxt("beamFEM:Warning", "%s", w.c_str());
     }
 
-    const char* fields[] = {"U", "K_torsion", "mass", "success"};
-    plhs[0] = mxCreateStructMatrix(1, 1, 4, fields);
+    const char* fields[] = {"U", "K_torsion", "mass", "success", "element_forces", "element_stress_vm",
+                            "stress_max", "element_buckling_ratio", "buckling_ratio"};
+    plhs[0] = mxCreateStructMatrix(1, 1, 9, fields);
     const mwSize n_nodes = in.nodes.rows();
     mxArray* U = mxCreateDoubleMatrix(n_nodes, 6, mxREAL);
     double* up = mxGetPr(U);
@@ -89,4 +98,9 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
     mxSetField(plhs[0], 0, "K_torsion", mxCreateDoubleScalar(res.K_torsion));
     mxSetField(plhs[0], 0, "mass", mxCreateDoubleScalar(res.mass));
     mxSetField(plhs[0], 0, "success", mxCreateDoubleScalar(1.0));
+    mxSetField(plhs[0], 0, "element_forces", to_mx(res.element_forces));
+    mxSetField(plhs[0], 0, "element_stress_vm", to_mx(res.stress_vm));
+    mxSetField(plhs[0], 0, "stress_max", mxCreateDoubleScalar(res.stress_max));
+    mxSetField(plhs[0], 0, "element_buckling_ratio", to_mx(res.buckling));
+    mxSetField(plhs[0], 0, "buckling_ratio", mxCreateDoubleScalar(res.buckling_ratio));
 }

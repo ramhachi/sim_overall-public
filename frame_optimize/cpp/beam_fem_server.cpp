@@ -12,7 +12,8 @@
  * {"command": "SHUTDOWN"}
  *
  * Response:
- * {"success": true, "U": [...], "K_torsion": ..., "mass": ...}
+ * {"success": true, "U": [...], "K_torsion": ..., "mass": ..., "element_forces": ..., "element_stress_vm": ...,
+ *  "stress_max": ..., "element_buckling_ratio": ..., "buckling_ratio": ...}   (see beam_fem_standalone.cpp)
  * {"success": false, "error": "..."}
  */
 

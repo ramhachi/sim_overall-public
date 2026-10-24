@@ -14,6 +14,7 @@
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -50,6 +51,12 @@ struct FemResult {
     Eigen::VectorXd U;
     double mass = 0.0;
     double K_torsion = 0.0;
+    Eigen::MatrixXd element_forces;  // M x 12 local end forces at the flexible ends [N, N*m]:
+                                     // [Fx Fy Fz Mx My Mz]_i [Fx Fy Fz Mx My Mz]_j
+    Eigen::VectorXd stress_vm;       // M, max von Mises over both ends [MPa]
+    Eigen::VectorXd buckling;        // M, compressive N / P_cr (0 in tension)
+    double stress_max = 0.0;
+    double buckling_ratio = 0.0;
     std::vector<std::string> warnings;
 };
 
@@ -194,6 +201,42 @@ inline BeamElement parse_element_row(const double* row, int ncols, const Eigen::
     return e;
 }
 
+// End forces f = K_flex * H * T * u_e, extreme-fibre von Mises at both flexible ends
+// (sigma = |N|/A + bending, tau = torsion) and Euler P_cr = pi^2 E I / (K Lf)^2.
+// ponytail: transverse shear stress ignored and K = 1 (pinned-pinned, conservative for
+// welded nodes); add V/kA and calibrated K if members fail near the limit.
+inline void compute_element_stresses(const std::vector<BeamElement>& elements, const Eigen::VectorXd& U,
+                                     FemResult& res) {
+    const Eigen::Index m = static_cast<Eigen::Index>(elements.size());
+    res.element_forces.resize(m, 12);
+    res.stress_vm.resize(m);
+    res.buckling.resize(m);
+    for (Eigen::Index k = 0; k < m; ++k) {
+        const BeamElement& e = elements[k];
+        Vec12 ue;
+        ue << U.segment<6>(6 * e.node_i), U.segment<6>(6 * e.node_j);
+        const Vec12 f = compute_local_stiffness(e, e.Lf) * compute_offset_matrix(e) * compute_transformation(e.R) * ue;
+        res.element_forces.row(k) = f.transpose();
+
+        const double c = e.D / 2.0;  // mm
+        const double am = (e.D - e.t) * (e.D - e.t);
+        double vm = 0.0;
+        for (int end = 0; end < 2; ++end) {
+            const double N = f(6 * end), Tq = f(6 * end + 3) * 1e3, My = f(6 * end + 4) * 1e3, Mz = f(6 * end + 5) * 1e3;
+            const double sb = e.shape == 1 ? std::hypot(My, Mz) * c / e.Iy
+                                           : (std::abs(My) / e.Iy + std::abs(Mz) / e.Iz) * c;
+            const double tau = e.shape == 1 ? std::abs(Tq) * c / e.J : std::abs(Tq) / (2.0 * am * e.t);
+            const double sigma = std::abs(N) / e.A + sb;
+            vm = std::max(vm, std::sqrt(sigma * sigma + 3.0 * tau * tau));
+        }
+        res.stress_vm(k) = vm;
+        const double P_cr = kPi * kPi * e.E * 1e9 * std::min(e.Iy, e.Iz) * 1e-12 / (e.Lf * e.Lf);
+        res.buckling(k) = std::max(0.0, -f(6)) / P_cr;  // f(6) = axial force at j, tension > 0
+    }
+    res.stress_max = m ? res.stress_vm.maxCoeff() : 0.0;
+    res.buckling_ratio = m ? res.buckling.maxCoeff() : 0.0;
+}
+
 inline FemResult solve_frame(const FemInput& in) {
     const int n_nodes = static_cast<int>(in.nodes.rows());
     const int n_dof = 6 * n_nodes;
@@ -265,6 +308,7 @@ inline FemResult solve_frame(const FemInput& in) {
     if (solver.info() != Eigen::Success) throw std::runtime_error("Linear solve failed");
 
     res.K_torsion = compute_torsional_rigidity(in.nodes, res.U, in.loads);
+    compute_element_stresses(in.elements, res.U, res);
     return res;
 }
 
@@ -300,6 +344,14 @@ Json solve_json(const Json& input) {
     for (size_t i = 0; i < U.size(); ++i)
         for (int d = 0; d < 6; ++d) U[i][d] = res.U(6 * i + d);
     out["U"] = U;
+    std::vector<std::vector<double>> ef(static_cast<size_t>(res.element_forces.rows()), std::vector<double>(12));
+    for (size_t k = 0; k < ef.size(); ++k)
+        for (int c = 0; c < 12; ++c) ef[k][c] = res.element_forces(k, c);
+    out["element_forces"] = ef;
+    out["element_stress_vm"] = std::vector<double>(res.stress_vm.data(), res.stress_vm.data() + res.stress_vm.size());
+    out["element_buckling_ratio"] = std::vector<double>(res.buckling.data(), res.buckling.data() + res.buckling.size());
+    out["stress_max"] = res.stress_max;
+    out["buckling_ratio"] = res.buckling_ratio;
     if (!res.warnings.empty()) out["warnings"] = res.warnings;
     return out;
 }

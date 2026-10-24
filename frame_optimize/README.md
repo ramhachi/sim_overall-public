@@ -310,6 +310,13 @@ Closed-form checks: `beam_fem_standalone --selftest` (CTest `beam_fem_closed_for
   along the two legs onto the chassis pickups; the case keeps the file's `source` tag. Supports: 3-2-1 on
   the rear mounts (reactions carry the inertial resultant). `data/frame_load_cases_synthetic_example.json`
   is **synthetic** (schema demo only); no 14DOF mount-load export exists yet.
+* **Stress recovery (#50)**: solvers return `element_forces` (Mx12 local end forces at the flexible ends),
+  `element_stress_vm` / `stress_max` (extreme-fibre |N|/A + bending with torsion, von Mises, MPa) and
+  `element_buckling_ratio` / `buckling_ratio` (compression / Euler P_cr, K = 1, L = flexible length).
+  The objective adds `gamma_yield·Σmax(0, σ_vm/Sy_welded − 1)² + gamma_buckling·Σmax(0, P/P_cr − 1)²`
+  over all non-torsion cases (defaults 50/50). SES equivalence uses `rulebook_baseline` in
+  `data/materials.json` (F.3.4.2 values 200 GPa / 305 / 365 MPa, verify against the current rules).
+  Not yet: transverse shear stress, local D/t buckling, fatigue (rainflow/Miner is P1 post-processing).
 
 ---
 

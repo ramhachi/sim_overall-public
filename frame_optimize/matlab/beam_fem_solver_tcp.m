@@ -150,6 +150,11 @@ function result = beam_fem_solver_tcp(nodes, elements, bcs, loads, options)
     end
 
     result.U = U;
+    for extra = {'element_forces', 'element_stress_vm', 'stress_max', 'element_buckling_ratio', 'buckling_ratio', 'warnings'}
+        if isfield(response, extra{1})
+            result.(extra{1}) = response.(extra{1});
+        end
+    end
 end
 
 function out_cell = force2D(mat)
