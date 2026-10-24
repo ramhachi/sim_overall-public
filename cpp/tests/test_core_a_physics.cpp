@@ -240,3 +240,39 @@ TEST(CoreA_Brake, BalanceIsPressureRatio) {
     }
     EXPECT_GT(lagged.state().omega[0], instant.state().omega[0] + 0.5);  // lagged pressure brakes less
 }
+
+namespace {
+Vehicle14DOF_New launch(const VehicleParams& p, int steps, bool shift_mid) {
+    Vehicle14DOF_New veh(p);
+    veh.set_initial_velocity(8.0);
+    DriverInput in;
+    in.throttle = 1.0;
+    in.gear = 2;
+    for (int k = 0; k < steps; ++k) {
+        if (shift_mid && k == steps / 2) in.gear = 3;
+        veh.step(0.001, in);
+    }
+    return veh;
+}
+}  // namespace
+
+// #4: reflected engine/gearbox inertia slows rear-wheel spin-up and the launch.
+TEST(CoreA_Driveline, ReflectedInertiaAndShiftCut) {
+    VehicleParams p = VehicleParams::default_fsae();
+    const auto base = launch(p, 50, false);
+    p.powertrain.I_engine = 0.05;   // test value, not a measured CBR600 figure
+    p.powertrain.I_gearbox = 0.01;
+    const auto heavy = launch(p, 50, false);
+    EXPECT_LT(heavy.state().omega[2], base.state().omega[2]);
+
+    // Shift: drive torque is cut for shift_time_s after the gear change.
+    p.powertrain.shift_time_s = 0.05;
+    const auto shifting = launch(p, 60, true);   // gear change at 30 ms, still cut at 60 ms
+    EXPECT_LE(shifting.get_tire_Fx()[2], 0.0);
+    EXPECT_GT(heavy.get_tire_Fx()[2], 0.0);
+
+    // mass.Iw as 4-element JSON array is accepted alongside the legacy scalar.
+    const auto parsed = VehicleParams::from_json_string("{\"mass\": {\"Iw\": [0.3, 0.3, 0.5, 0.5]}}");
+    EXPECT_DOUBLE_EQ(parsed.mass.Iw_corner[3], 0.5);
+    EXPECT_DOUBLE_EQ(parsed.mass.Iw, 0.4);
+}

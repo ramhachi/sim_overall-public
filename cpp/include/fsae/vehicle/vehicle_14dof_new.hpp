@@ -150,6 +150,8 @@ public:
         }
         time_ = 0;
         brake_pressure_lagged_ = 0.0;
+        last_gear_ = -1;
+        shift_end_time_ = -1.0;
         invalidate_pinn_force_cache();
         
         // 初期状態でキャッシュを更新
@@ -170,6 +172,11 @@ public:
             state_.r,
             drs_steering_angle,
             dt);
+
+        if (last_gear_ >= 0 && input.gear != last_gear_) {
+            shift_end_time_ = time_ + params_.powertrain.shift_time_s;
+        }
+        last_gear_ = input.gear;
 
         if (params_.brake.pressure_lag_s > 0.0) {
             // ponytail: lag held over the RK4 step (ZOH); make it a state if tau ~ dt.
@@ -571,6 +578,8 @@ private:
     DRSSystem drs_system_;
     mutable bool drs_active_ = false;
     double brake_pressure_lagged_ = 0.0;  // ライン圧1次遅れ（step毎ZOH更新）[Pa]
+    int last_gear_ = -1;                  // 変速検出用（-1 = 未入力）
+    double shift_end_time_ = -1.0;        // 駆動トルク遮断の終了時刻 [s]
 
     // デバッグ用キャッシュ
     mutable std::array<double, 4> tire_Fz_ = {0, 0, 0, 0};
@@ -1652,7 +1661,6 @@ private:
         dxdt(10) = (My_total - gyro_pitch - coupling_pitch) / Iyy;
         
         // ======== 車輪回転 ========
-        double Iw = params_.mass.Iw;
         double R_tire = params_.tire.radius;
         
         // 後輪平均回転数からエンジンRPMを計算
@@ -1662,9 +1670,16 @@ private:
         // エンジントルク計算（トルクカーブ参照）
         double engine_torque = engine_map_.get_torque(engine_rpm, input.throttle);
         
-        // 駆動トルク（総減速比と効率を考慮）
+        // 駆動トルク（総減速比と効率を考慮）。変速中は遮断（#4）
         double total_ratio = gear_ratios_.get_total_ratio(input.gear);
-        double total_drive_torque = engine_torque * total_ratio * params_.powertrain.efficiency;
+        double total_drive_torque = (time_ < shift_end_time_)
+            ? 0.0
+            : engine_torque * total_ratio * params_.powertrain.efficiency;
+        // Engine/gearbox inertia reflected to the rear wheels, split evenly (#4).
+        // ponytail: kinematic engine (no clutch slip state); add an engine-speed state for launches.
+        // During a shift the clutch is open: no torque and no engine inertia on the wheels.
+        const double I_reflected_rear = (time_ < shift_end_time_) ? 0.0 : 0.5 * (params_.powertrain.I_engine * total_ratio * total_ratio
+            + params_.powertrain.I_gearbox * gear_ratios_.final_ratio * gear_ratios_.final_ratio);
         
         // LSDによる左右トルク配分
         double torque_RL, torque_RR;
@@ -1696,7 +1711,8 @@ private:
             // タイヤ座標系の縦力を直接使用
             double T_tire = -tire_Fx_stage[i] * R_tire;
 
-            dxdt(20 + i) = (T_drive + T_brake + T_tire) / Iw;
+            const double Iw_i = (params_.mass.Iw_corner[i] > 0.0) ? params_.mass.Iw_corner[i] : params_.mass.Iw;
+            dxdt(20 + i) = (T_drive + T_brake + T_tire) / (Iw_i + (i >= RL ? I_reflected_rear : 0.0));
         }
         
         // ======== フレームねじりダイナミクス（Phase A1）========

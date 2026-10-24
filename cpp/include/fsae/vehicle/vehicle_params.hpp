@@ -53,7 +53,9 @@ struct MassParams {
     double Ixz = -3.0;          // 慣性乗積 [kg·m²]
     
     // 車輪慣性
-    double Iw = 0.5;            // 車輪回転慣性 [kg·m²]
+    double Iw = 0.5;            // 車輪回転慣性 [kg·m²]（全輪共通、旧モデル互換）
+    // 輪別慣性 [FL,FR,RL,RR]（0 の輪は Iw を使用）。JSON の mass.Iw が配列ならここへ入る
+    std::array<double, 4> Iw_corner = {0.0, 0.0, 0.0, 0.0};
 };
 
 /// サスペンションパラメータ
@@ -280,6 +282,10 @@ struct PowertrainParams {
     double primary_ratio = 1.90;    // 一次減速比
     double final_ratio = 3.50;      // 最終減速比（スプロケット）
     double efficiency = 0.90;       // 伝達効率
+    // 反映慣性（#4）。0 = 無効（実測/カタログ値が無い限り推定値を入れない）
+    double I_engine = 0.0;          // クランク軸まわり慣性 [kg·m²]
+    double I_gearbox = 0.0;         // ミッション出力軸まわり慣性 [kg·m²]
+    double shift_time_s = 0.0;      // 変速中の駆動トルク遮断時間 [s]
     
     // 後方互換性のため残す（非推奨）
     double max_torque = 63.0;       // 最大エンジントルク [Nm]
@@ -402,8 +408,16 @@ struct VehicleParams {
             if (m.contains("Izz")) p.mass.Izz = m["Izz"];
             if (m.contains("Ixz_kgm2")) p.mass.Ixz = m["Ixz_kgm2"];
             if (m.contains("Ixz")) p.mass.Ixz = m["Ixz"];
-            if (m.contains("Iw_kgm2")) p.mass.Iw = m["Iw_kgm2"];
-            if (m.contains("Iw")) p.mass.Iw = m["Iw"];
+            for (const char* key : {"Iw_kgm2", "Iw"}) {
+                if (!m.contains(key)) continue;
+                if (m[key].is_array()) {
+                    double sum = 0.0;
+                    for (int i = 0; i < 4; ++i) sum += p.mass.Iw_corner[i] = m[key][i];
+                    p.mass.Iw = 0.25 * sum;  // legacy scalar consumers
+                } else {
+                    p.mass.Iw = m[key];
+                }
+            }
         }
 
         // サスペンション
@@ -664,6 +678,9 @@ struct VehicleParams {
             if (pt.contains("sprocket_ratio")) p.powertrain.final_ratio = pt["sprocket_ratio"];
             if (pt.contains("final_ratio")) p.powertrain.final_ratio = pt["final_ratio"];
             if (pt.contains("efficiency")) p.powertrain.efficiency = pt["efficiency"];
+            if (pt.contains("I_engine")) p.powertrain.I_engine = pt["I_engine"];
+            if (pt.contains("I_gearbox")) p.powertrain.I_gearbox = pt["I_gearbox"];
+            if (pt.contains("shift_time_s")) p.powertrain.shift_time_s = pt["shift_time_s"];
             if (pt.contains("max_torque")) p.powertrain.max_torque = pt["max_torque"];
             if (pt.contains("gear_ratio")) p.powertrain.gear_ratio = pt["gear_ratio"];
             if (pt.contains("lsd_preload")) p.powertrain.lsd_preload = pt["lsd_preload"];
