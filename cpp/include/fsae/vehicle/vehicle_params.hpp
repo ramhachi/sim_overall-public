@@ -2,13 +2,27 @@
 /// @file vehicle_params.hpp
 /// @brief 14DOF車両パラメータ構造体
 
+#include <algorithm>
 #include <array>
 #include <string>
+#include <vector>
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <stdexcept>
 
 namespace fsae::vehicle {
+
+/// Piecewise-linear lookup with constant extrapolation. Empty table -> fallback.
+inline double interp1_clamped(const std::vector<double>& x, const std::vector<double>& y,
+                              double q, double fallback) {
+    if (x.empty() || x.size() != y.size()) return fallback;
+    if (q <= x.front()) return y.front();
+    if (q >= x.back()) return y.back();
+    const auto it = std::upper_bound(x.begin(), x.end(), q);
+    const size_t k = static_cast<size_t>(it - x.begin());
+    const double t = (q - x[k - 1]) / (x[k] - x[k - 1]);
+    return y[k - 1] + t * (y[k] - y[k - 1]);
+}
 
 /// 車輪インデックス
 enum WheelIndex : int {
@@ -39,7 +53,9 @@ struct MassParams {
     double Ixz = -3.0;          // 慣性乗積 [kg·m²]
     
     // 車輪慣性
-    double Iw = 0.5;            // 車輪回転慣性 [kg·m²]
+    double Iw = 0.5;            // 車輪回転慣性 [kg·m²]（全輪共通、旧モデル互換）
+    // 輪別慣性 [FL,FR,RL,RR]（0 の輪は Iw を使用）。JSON の mass.Iw が配列ならここへ入る
+    std::array<double, 4> Iw_corner = {0.0, 0.0, 0.0, 0.0};
 };
 
 /// サスペンションパラメータ
@@ -47,10 +63,19 @@ struct SuspensionParams {
     // ばね
     std::array<double, 4> k_spring = {25000, 25000, 30000, 30000};  // [N/m]
     std::array<double, 4> motion_ratio = {0.85, 0.85, 0.90, 0.90};
+    // MR(travel) テーブル（任意, #10）。travel = 平衡からのホイールストローク [m]（+ 圧縮）。
+    // 空なら一定 MR。ばね力は F_wheel = MR(x)*(F_static/MR(0) + k*∫_0^x MR)。
+    std::vector<double> motion_ratio_table_travel = {};
+    std::array<std::vector<double>, 4> motion_ratio_table = {};
+    // true: ダンパー(Bouc-Wen)/LuGre/バンプストップも素子座標 (MR*x, MR*v) で評価し MR 倍で
+    // ホイールへ戻す（c0, bump_stop_* は素子側の値）。false: 旧挙動（ホイール座標のまま）
+    bool mr_applies_to_dampers = true;
     
     // アンチロールバー
-    double k_arb_f = 500.0;     // フロントARB（アクスル等価ロール剛性）[Nm/rad]
-    double k_arb_r = 300.0;     // リアARB（アクスル等価ロール剛性）[Nm/rad]
+    // ARB ロール剛性 [Nm/rad]。ホイールには kc_*.arb_motion_ratio^2 倍で効く（#10）。
+    // arb_motion_ratio = 1（既定）ならアクスル等価値として従来どおり
+    double k_arb_f = 500.0;     // フロントARB [Nm/rad]
+    double k_arb_r = 300.0;     // リアARB [Nm/rad]
     
     // Bouc-Wenダンパー（設計書セクション5.3 / 13.3準拠）
     // F_damper = c0 * v + k0 * x + alpha * z
@@ -76,8 +101,10 @@ struct SuspensionParams {
     int lugre_substeps = 1;         // サブステップ数（1=通常、10=0.1ms刻み）
     
     // バンプストップ
-    double bump_stop_gap = 0.03;    // [m]
-    double bump_stop_k = 100000.0;  // [N/m]
+    double bump_stop_gap = 0.03;    // 圧縮側ギャップ [m]
+    double bump_stop_k = 100000.0;  // 圧縮側剛性 [N/m]
+    double bump_stop_gap_rebound = -1.0;  // 伸び側ギャップ [m]（<0 → bump_stop_gap と同値）
+    double bump_stop_k_rebound = -1.0;    // 伸び側剛性 [N/m]（<0 → bump_stop_k と同値）
 
     // ジオメトリ（ガイド §2.4, §7）
     // キャンバーゲイン: サスペンションストローク1mあたりのキャンバー角変化 [rad/m]
@@ -219,6 +246,9 @@ struct TireParams {
     double c_tire = 500.0;      // タイヤ垂直減衰 [Ns/m]
     double dmu_dFz = -0.0001;   // 荷重感度 [1/N]
     double pneumatic_trail = 0.03; // SAT近似用空気トレール [m]
+    // 転がり抵抗係数 [-]（#12）。既定 0.015 は乗用/レーシングタイヤの舗装路典型値
+    // 0.010-0.020（Gillespie, Fundamentals of Vehicle Dynamics, ch.4）。実測コーストダウンで置換すること
+    double C_rr = 0.015;
 #ifdef FSAE_TEST_TIRE_MODEL_TYPE
     std::string model_type = FSAE_TEST_TIRE_MODEL_TYPE; // test-only TMeasy fallback
 #else
@@ -266,6 +296,10 @@ struct PowertrainParams {
     double primary_ratio = 1.90;    // 一次減速比
     double final_ratio = 3.50;      // 最終減速比（スプロケット）
     double efficiency = 0.90;       // 伝達効率
+    // 反映慣性（#4）。0 = 無効（実測/カタログ値が無い限り推定値を入れない）
+    double I_engine = 0.0;          // クランク軸まわり慣性 [kg·m²]
+    double I_gearbox = 0.0;         // ミッション出力軸まわり慣性 [kg·m²]
+    double shift_time_s = 0.0;      // 変速中の駆動トルク遮断時間 [s]
     
     // 後方互換性のため残す（非推奨）
     double max_torque = 63.0;       // 最大エンジントルク [Nm]
@@ -282,8 +316,16 @@ struct PowertrainParams {
 
 /// ブレーキパラメータ
 struct BrakeParams {
-    double max_pressure = 8e6;  // 最大油圧 [Pa]
-    double balance = 0.55;      // フロント配分
+    double max_pressure = 8e6;  // 最大油圧 [Pa]（バランス中立時のライン圧 @ pedal=1）
+    // フロント配分 = 前後マスターシリンダ圧比 (#36): p_front = 2*balance*p,
+    // p_rear = 2*(1-balance)*p。0.5 で前後同圧（中立）、幾何学的な前後差は
+    // caliper_area*effective_radius が受け持つ（バランスバー + 同径MCの物理）。
+    double balance = 0.55;
+    // ペダル→ライン圧テーブル [0-1] -> [Pa]（空なら pedal*max_pressure）
+    std::vector<double> pedal_table = {};
+    std::vector<double> pressure_table = {};
+    double pressure_lag_s = 0.0;       // 1次遅れ時定数 τ [s]（0=遅れ無し）
+    double omega_smooth = 0.5;         // T = -T_max*tanh(ω/ω_s) の ω_s [rad/s]
     double mu_pad = 0.45;       // パッド摩擦係数
     std::array<double, 4> caliper_area = {0.002, 0.002, 0.0015, 0.0015};  // [m²]
     std::array<double, 4> effective_radius = {0.10, 0.10, 0.09, 0.09};    // [m]
@@ -380,8 +422,16 @@ struct VehicleParams {
             if (m.contains("Izz")) p.mass.Izz = m["Izz"];
             if (m.contains("Ixz_kgm2")) p.mass.Ixz = m["Ixz_kgm2"];
             if (m.contains("Ixz")) p.mass.Ixz = m["Ixz"];
-            if (m.contains("Iw_kgm2")) p.mass.Iw = m["Iw_kgm2"];
-            if (m.contains("Iw")) p.mass.Iw = m["Iw"];
+            for (const char* key : {"Iw_kgm2", "Iw"}) {
+                if (!m.contains(key)) continue;
+                if (m[key].is_array()) {
+                    double sum = 0.0;
+                    for (int i = 0; i < 4; ++i) sum += p.mass.Iw_corner[i] = m[key][i];
+                    p.mass.Iw = 0.25 * sum;  // legacy scalar consumers
+                } else {
+                    p.mass.Iw = m[key];
+                }
+            }
         }
 
         // サスペンション
@@ -415,6 +465,20 @@ struct VehicleParams {
             // バンプストップ & ジオメトリ
             if (s.contains("bump_stop_gap")) p.suspension.bump_stop_gap = s["bump_stop_gap"];
             if (s.contains("bump_stop_k")) p.suspension.bump_stop_k = s["bump_stop_k"];
+            if (s.contains("bump_stop_gap_rebound")) p.suspension.bump_stop_gap_rebound = s["bump_stop_gap_rebound"];
+            if (s.contains("bump_stop_k_rebound")) p.suspension.bump_stop_k_rebound = s["bump_stop_k_rebound"];
+            if (s.contains("mr_applies_to_dampers")) p.suspension.mr_applies_to_dampers = s["mr_applies_to_dampers"];
+            if (s.contains("motion_ratio_table")) {
+                auto& mt = s["motion_ratio_table"];
+                p.suspension.motion_ratio_table_travel = mt.at("travel").get<std::vector<double>>();
+                const std::array<std::string, 4> keys = {"FL", "FR", "RL", "RR"};
+                for (int i = 0; i < 4; ++i) {
+                    p.suspension.motion_ratio_table[i] = mt.at(keys[i]).get<std::vector<double>>();
+                    if (p.suspension.motion_ratio_table[i].size() != p.suspension.motion_ratio_table_travel.size()) {
+                        throw std::runtime_error("suspension.motion_ratio_table." + keys[i] + " size != travel size");
+                    }
+                }
+            }
             if (s.contains("camber_gain") && s["camber_gain"].is_array()) {
                 for(int i=0; i<4; ++i) p.suspension.camber_gain[i] = s["camber_gain"][i];
             }
@@ -568,6 +632,7 @@ struct VehicleParams {
             if (t.contains("c_tire")) p.tire.c_tire = t["c_tire"];
             if (t.contains("dmu_dFz")) p.tire.dmu_dFz = t["dmu_dFz"];
             if (t.contains("pneumatic_trail")) p.tire.pneumatic_trail = t["pneumatic_trail"];
+            if (t.contains("C_rr")) p.tire.C_rr = t["C_rr"];
             if (t.contains("model_type")) p.tire.model_type = t["model_type"];
             if (t.contains("model_dir")) p.tire.model_dir = t["model_dir"];
             if (t.contains("model_manifest")) p.tire.model_manifest = t["model_manifest"];
@@ -642,6 +707,9 @@ struct VehicleParams {
             if (pt.contains("sprocket_ratio")) p.powertrain.final_ratio = pt["sprocket_ratio"];
             if (pt.contains("final_ratio")) p.powertrain.final_ratio = pt["final_ratio"];
             if (pt.contains("efficiency")) p.powertrain.efficiency = pt["efficiency"];
+            if (pt.contains("I_engine")) p.powertrain.I_engine = pt["I_engine"];
+            if (pt.contains("I_gearbox")) p.powertrain.I_gearbox = pt["I_gearbox"];
+            if (pt.contains("shift_time_s")) p.powertrain.shift_time_s = pt["shift_time_s"];
             if (pt.contains("max_torque")) p.powertrain.max_torque = pt["max_torque"];
             if (pt.contains("gear_ratio")) p.powertrain.gear_ratio = pt["gear_ratio"];
             if (pt.contains("lsd_preload")) p.powertrain.lsd_preload = pt["lsd_preload"];
@@ -697,6 +765,10 @@ struct VehicleParams {
             auto& b = config["brake"];
             if (b.contains("max_pressure")) p.brake.max_pressure = b["max_pressure"];
             if (b.contains("balance")) p.brake.balance = b["balance"];
+            if (b.contains("pedal_table")) p.brake.pedal_table = b["pedal_table"].get<std::vector<double>>();
+            if (b.contains("pressure_table")) p.brake.pressure_table = b["pressure_table"].get<std::vector<double>>();
+            if (b.contains("pressure_lag_s")) p.brake.pressure_lag_s = b["pressure_lag_s"];
+            if (b.contains("omega_smooth")) p.brake.omega_smooth = b["omega_smooth"];
             if (b.contains("mu_pad")) p.brake.mu_pad = b["mu_pad"];
             if (b.contains("caliper_area") && b["caliper_area"].is_array()) {
                 for (int i = 0; i < 4; ++i) p.brake.caliper_area[i] = b["caliper_area"][i];

@@ -9,6 +9,7 @@
 /// vehicle model and the regression tests use the same sign convention.
 
 #include <array>
+#include <cmath>
 #include <Eigen/Dense>
 
 namespace fsae::vehicle {
@@ -18,6 +19,18 @@ inline Eigen::Vector3d compute_contact_patch_velocity(
     const Eigen::Vector3d& body_angular_rate,
     const Eigen::Vector3d& contact_position) {
     return body_velocity + body_angular_rate.cross(contact_position);
+}
+
+/// Gyroscopic moment of one spinning wheel on its carrier (#13).
+/// Forward rolling (omega > 0) spins about -Y in SAE (Z down), so the wheel's
+/// angular momentum is h = -Iw*omega*y_hat with y_hat = (-sin(delta), cos(delta), 0).
+/// Moment exerted on the carrier rotating with body rate Omega: M = h x Omega.
+/// Right turn (r > 0): Mx < 0 (rolls the body outward). Body roll rate p > 0 on a
+/// front wheel: Mz > 0 (steers right, as a leaning bike).
+inline Eigen::Vector3d compute_wheel_gyro_moment(
+    double Iw, double omega, double delta, const Eigen::Vector3d& body_rate) {
+    const Eigen::Vector3d h = -Iw * omega * Eigen::Vector3d(-std::sin(delta), std::cos(delta), 0.0);
+    return h.cross(body_rate);
 }
 
 struct BodyMomentContributions {

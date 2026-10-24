@@ -60,6 +60,20 @@ inline double compute_steering_acceleration(
     return ddelta_sw_accel;
 }
 
+/// @brief キングピン軸まわりのトルク [Nm]（#5）
+///
+/// Moments about the (near-vertical, Z-down) steering axis in the tyre frame,
+/// positive = steer right, same sign as tyre Mz (TMeasy: Mz = -t_p*Fy):
+///   contact patch t_mech behind the axis:  r = (-t_mech, 0, 0) -> -t_mech*cos(caster)*Fy
+///   contact patch scrub outboard:          r = (0, y_sign*scrub, 0) -> -y_sign*scrub*Fx
+/// y_sign = -1 for left wheels, +1 for right wheels (SAE Y right).
+/// ponytail: no KPI/caster jacking term (needs K&C jacking_vs_steer, not exported yet).
+inline double compute_kingpin_torque(double Mz, double Fx, double Fy,
+                                     double mechanical_trail, double caster,
+                                     double scrub_radius, double y_sign) {
+    return Mz - Fy * mechanical_trail * std::cos(caster) - y_sign * scrub_radius * Fx;
+}
+
 /// @brief ステアリングホイール角からタイヤ舵角への変換
 /// @param delta_sw ステアリングホイール角 [rad]
 /// @param R_steer 総ステアリング比 [-]

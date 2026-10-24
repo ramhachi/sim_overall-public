@@ -131,12 +131,19 @@ public:
     const DRSSystem& drs_system() const { return drs_system_; }
     bool is_drs_active() const { return drs_active_; }
     const std::array<double, 4>& tire_Mz() const { return tire_Mz_; }
+    /// 前輪キングピン軸トルク [FL, FR] [Nm]（角度モードでも診断用に更新, #5）
+    const std::array<double, 2>& get_kingpin_torque() const { return kingpin_torque_; }
     
+    /// 路面高さ [FL,FR,RL,RR] [m]（Z 下向き正: 路面が上がると負, #14）。step 間は保持。
+    void set_road_input(const std::array<double, 4>& z_road) { z_road_ = z_road; }
+    const std::array<double, 4>& road_input() const { return z_road_; }
+
     // ======== 初期化 ========
     void set_initial_velocity(double vx) {
+        apply_aero_static_equilibrium(vx);
         state_.vx = vx;
         for (int i = 0; i < 4; ++i) {
-            state_.omega[i] = vx / params_.tire.radius;
+            state_.omega[i] = vx / compute_effective_rolling_radius(static_Fz_[i] + params_.mass.m_unsprung[i] * 9.81);
         }
         invalidate_pinn_force_cache();
         capture_pinn_cache_state_snapshot();
@@ -149,6 +156,9 @@ public:
             state_.z_u[i] = z_u_equilibrium_[i];
         }
         time_ = 0;
+        brake_pressure_lagged_ = 0.0;
+        last_gear_ = -1;
+        shift_end_time_ = -1.0;
         invalidate_pinn_force_cache();
         
         // 初期状態でキャッシュを更新
@@ -169,6 +179,17 @@ public:
             state_.r,
             drs_steering_angle,
             dt);
+
+        if (last_gear_ >= 0 && input.gear != last_gear_) {
+            shift_end_time_ = time_ + params_.powertrain.shift_time_s;
+        }
+        last_gear_ = input.gear;
+
+        if (params_.brake.pressure_lag_s > 0.0) {
+            // ponytail: lag held over the RK4 step (ZOH); make it a state if tau ~ dt.
+            brake_pressure_lagged_ += (1.0 - std::exp(-dt / params_.brake.pressure_lag_s))
+                * (compute_brake_pressure_cmd(input.brake) - brake_pressure_lagged_);
+        }
 
         StateVector x = state_to_vector(state_);
         if (pinn_cache_state_snapshot_valid_ &&
@@ -230,7 +251,7 @@ public:
                 double s = std::sin(steer[i]);
                 double vx_wheel = c * vx_contact + s * vy_contact;
                 double vy_wheel = -s * vx_contact + c * vy_contact;
-                double omega_r = state_.omega[i] * params_.tire.radius;
+                double omega_r = state_.omega[i] * compute_effective_rolling_radius(tire_Fz_[i]);
                 
                 slip_info[i].vsx = vx_wheel - omega_r;
                 slip_info[i].vsy = vy_wheel;
@@ -251,11 +272,14 @@ public:
     void step_adaptive(double dt, const DriverInput& input) {
         // バンプストップ接触判定
         bool bumpstop_contact = false;
-        const double bump_threshold = 0.9 * params_.suspension.bump_stop_gap;
+        const auto& sp = params_.suspension;
+        const double bump_threshold = 0.9 * std::min(sp.bump_stop_gap,
+            sp.bump_stop_gap_rebound < 0.0 ? sp.bump_stop_gap : sp.bump_stop_gap_rebound);
 
         for (int i = 0; i < 4; ++i) {
-            double susp_travel = std::abs(state_.z - state_.z_u[i] - (z_equilibrium_ - z_u_equilibrium_[i]));
-            if (susp_travel > bump_threshold) {
+            const double x = state_.z - state_.z_u[i] - (z_equilibrium_ - z_u_equilibrium_[i]);
+            // Gaps live in element coordinates when MR applies to the bump stop (#10).
+            if (std::abs(damper_motion_ratio(i, x) * x) > bump_threshold) {
                 bumpstop_contact = true;
                 break;
             }
@@ -379,7 +403,12 @@ public:
             if (kc_owns_steer_camber) {
                 camber += eval_quadratic(kc.kinematics.camber_vs_steer, steer_angle);
             }
-            camber += kc.kinematics.roll_camber_gain * axle_roll_angle;
+            // camber_vs_travel already sees the roll-induced +-t/2*phi travel, so the
+            // roll gain is applied only without it (#38). Exporters must define
+            // roll_camber_gain as the residual camber(phi) - camber_vs_travel(travel(phi)).
+            if (is_zero_polynomial(kc.kinematics.camber_vs_travel)) {
+                camber += kc.kinematics.roll_camber_gain * axle_roll_angle;
+            }
 
             for (int i = 0; i < 6; ++i) {
                 camber += kc.compliance.camber_per_load[i] * kc_loads[i];
@@ -473,6 +502,23 @@ public:
         return compliance_angles;
     }
 
+    /// ペダル入力 [0-1] → ライン圧 [Pa]（テーブル未設定なら線形）
+    double compute_brake_pressure_cmd(double pedal) const {
+        return interp1_clamped(params_.brake.pedal_table, params_.brake.pressure_table, pedal,
+                               pedal * params_.brake.max_pressure);
+    }
+
+    /// ライン圧 → 各輪最大ブレーキトルク [Nm]（balance = 前後MC圧比, #36）
+    std::array<double, 4> compute_brake_torque_max(double line_pressure) const {
+        const auto& b = params_.brake;
+        std::array<double, 4> T{};
+        for (int i = 0; i < 4; ++i) {
+            const double p_axle = 2.0 * line_pressure * ((i < 2) ? b.balance : 1.0 - b.balance);
+            T[i] = p_axle * b.caliper_area[i] * b.mu_pad * b.effective_radius[i];
+        }
+        return T;
+    }
+
     /// ARB力計算
     /// @param susp_travel サスペンション変位 [m]
     /// @return ARB力 [N]
@@ -484,7 +530,10 @@ public:
         double roll_angle_f = roll_diff_f / track_f;
         // k_arb is the axle-equivalent roll stiffness [Nm/rad]; the factor 1/2
         // converts it to the equal-and-opposite wheel-force couple.
-        double torque_arb_f = 0.5 * params_.suspension.k_arb_f * roll_angle_f;
+        // k_arb is at the bar; the wheel sees it through arb_motion_ratio^2 (#10, default 1).
+        const double mr_arb_f = params_.suspension.kc_front.arb_motion_ratio;
+        const double mr_arb_r = params_.suspension.kc_rear.arb_motion_ratio;
+        double torque_arb_f = 0.5 * params_.suspension.k_arb_f * mr_arb_f * mr_arb_f * roll_angle_f;
         double half_track_f = track_f / 2;
         F_arb[FL] = torque_arb_f / half_track_f;
         F_arb[FR] = -torque_arb_f / half_track_f;
@@ -492,7 +541,7 @@ public:
         double track_r = params_.mass.track_r;
         double roll_diff_r = susp_travel[RL] - susp_travel[RR];
         double roll_angle_r = roll_diff_r / track_r;
-        double torque_arb_r = 0.5 * params_.suspension.k_arb_r * roll_angle_r;
+        double torque_arb_r = 0.5 * params_.suspension.k_arb_r * mr_arb_r * mr_arb_r * roll_angle_r;
         double half_track_r = track_r / 2;
         F_arb[RL] = torque_arb_r / half_track_r;
         F_arb[RR] = -torque_arb_r / half_track_r;
@@ -541,12 +590,17 @@ private:
     // DRSシステム
     DRSSystem drs_system_;
     mutable bool drs_active_ = false;
+    std::array<double, 4> z_road_ = {0, 0, 0, 0};  // 路面高さ（Z 下向き正）[m]
+    double brake_pressure_lagged_ = 0.0;  // ライン圧1次遅れ（step毎ZOH更新）[Pa]
+    int last_gear_ = -1;                  // 変速検出用（-1 = 未入力）
+    double shift_end_time_ = -1.0;        // 駆動トルク遮断の終了時刻 [s]
 
     // デバッグ用キャッシュ
     mutable std::array<double, 4> tire_Fz_ = {0, 0, 0, 0};
     mutable std::array<double, 4> tire_Fx_ = {0, 0, 0, 0};
     mutable std::array<double, 4> tire_Fy_ = {0, 0, 0, 0};
     mutable std::array<double, 4> tire_Mz_ = {0, 0, 0, 0};  // セルフアライニングトルク
+    mutable std::array<double, 2> kingpin_torque_ = {0, 0};  // 前輪キングピン軸トルク [Nm]
     mutable std::array<double, 4> bw_forces_ = {0, 0, 0, 0};
     mutable std::array<double, 4> lugre_forces_ = {0, 0, 0, 0};
     mutable std::array<double, 4> spring_forces_ = {0, 0, 0, 0};
@@ -564,17 +618,29 @@ private:
         pinn_cache_state_snapshot_valid_ = true;
     }
 
+    /// TTC -> vehicle convention is a Y mirror: Fy, Mx and Mz all flip (#12 adds Mx).
+    physics::tire::TireForces to_vehicle_convention(physics::tire::TireForces forces) const {
+        if (params_.tire.pinn_ttc_lateral_sign) {
+            forces.Fy = -forces.Fy;
+            forces.Mx = -forces.Mx;
+            forces.Mz = -forces.Mz;
+        }
+        return forces;
+    }
+
+    /// 有効転がり半径 Re = R0 - Fz/(3*k_tire)（#12）。ラジアルタイヤでは Re が無負荷半径から
+    /// 静的たわみの約 1/3 だけ減る（Pacejka, Tire and Vehicle Dynamics §1.x の近似）。
+    /// ponytail: analytic fit, replace with a TTC RL/RE LUT (tire_fitting/data_loader.py).
+    double compute_effective_rolling_radius(double Fz) const {
+        return params_.tire.radius - std::max(Fz, 0.0) / (3.0 * params_.tire.k_tire);
+    }
+
     physics::tire::TireForces evaluate_pinn_tire_force(
         int wheel_index,
         const physics::tire::TireInput& input) const {
         const double eval_rate_hz = params_.tire.pinn_eval_rate_hz;
         if (eval_rate_hz <= 0.0) {
-            auto forces = nn_tire_model_.predict(input, false);
-            if (params_.tire.pinn_ttc_lateral_sign) {
-                forces.Fy = -forces.Fy;
-                forces.Mz = -forces.Mz;
-            }
-            return forces;
+            return to_vehicle_convention(nn_tire_model_.predict(input, true));
         }
 
         const double interval = 1.0 / eval_rate_hz;
@@ -585,12 +651,7 @@ private:
             !pinn_force_cache_valid_[wheel_index] ||
             sample_time > pinn_force_cache_time_[wheel_index] + time_tolerance;
         if (sample_due) {
-            auto forces = nn_tire_model_.predict(input, false);
-            if (params_.tire.pinn_ttc_lateral_sign) {
-                forces.Fy = -forces.Fy;
-                forces.Mz = -forces.Mz;
-            }
-            pinn_force_cache_[wheel_index] = forces;
+            pinn_force_cache_[wheel_index] = to_vehicle_convention(nn_tire_model_.predict(input, true));
             pinn_force_cache_time_[wheel_index] = sample_time;
             pinn_force_cache_valid_[wheel_index] = true;
         }
@@ -792,6 +853,33 @@ private:
         }
     }
     
+    /// Per-corner static equilibrium including aero load at speed vx (#15, init only).
+    /// Linear springs/tyres at the reference point; solves body heave+pitch and unsprung heights
+    /// so that spring and tyre forces carry static + aero loads (no start-up bounce).
+    void apply_aero_static_equilibrium(double vx) {
+        const auto aero = aero_map_.compute_forces(
+            std::abs(vx), params_.aero.nominal_front_ride_height_mm,
+            params_.aero.nominal_rear_ride_height_mm, 0.0, 0.0, false);
+        const double a = params_.mass.a, b = params_.mass.b, L = a + b;
+        const double D = -aero.Fz;  // downforce [N], +down
+        const double dF_axle[2] = {(D * b - aero.My) / (2.0 * L), (D * a + aero.My) / (2.0 * L)};
+        double A[2];
+        for (int ax = 0; ax < 2; ++ax) {
+            double k_eff = 0.0;
+            for (int i = 2 * ax; i < 2 * ax + 2; ++i) {
+                const double mr = motion_ratio_at(i, 0.0);
+                k_eff += 0.5 * params_.suspension.k_spring[i] * mr * mr;
+            }
+            A[ax] = dF_axle[ax] / k_eff + dF_axle[ax] / params_.tire.k_tire;  // spring + tyre stroke
+        }
+        const double theta = (A[1] - A[0]) / L;
+        state_.theta = theta;
+        state_.z = z_equilibrium_ + A[0] + a * theta;
+        for (int i = 0; i < 4; ++i) {
+            state_.z_u[i] = z_u_equilibrium_[i] + dF_axle[i / 2] / params_.tire.k_tire;
+        }
+    }
+
     void compute_equilibrium() {
         const double m = params_.mass.m_sprung;
         const double g = 9.81;
@@ -919,17 +1007,46 @@ private:
     }
     
     // ======== バンプストップ力 ========
-    double compute_bumpstop_force(double susp_travel_from_eq, int wheel_idx) const {
-        double gap = params_.suspension.bump_stop_gap;
-        double k_bump = params_.suspension.bump_stop_k;
-
-        if (susp_travel_from_eq > gap) {
-            return k_bump * (susp_travel_from_eq - gap);
-        } else if (susp_travel_from_eq < -gap) {
-            return k_bump * (susp_travel_from_eq + gap);
-        }
+public:  // suspension element helpers (public for tests)
+    /// Bump stop on the element stroke x (+ compression), separate bump/rebound gap and rate (#10).
+    double compute_bumpstop_force(double x, int /*wheel_idx*/) const {
+        const auto& sp = params_.suspension;
+        const double gap_rb = sp.bump_stop_gap_rebound < 0.0 ? sp.bump_stop_gap : sp.bump_stop_gap_rebound;
+        const double k_rb = sp.bump_stop_k_rebound < 0.0 ? sp.bump_stop_k : sp.bump_stop_k_rebound;
+        if (x > sp.bump_stop_gap) return sp.bump_stop_k * (x - sp.bump_stop_gap);
+        if (x < -gap_rb) return k_rb * (x + gap_rb);
         return 0;
     }
+
+    /// Motion ratio at wheel travel x from equilibrium (table or constant).
+    double motion_ratio_at(int i, double x) const {
+        return interp1_clamped(params_.suspension.motion_ratio_table_travel,
+                               params_.suspension.motion_ratio_table[i], x,
+                               params_.suspension.motion_ratio[i]);
+    }
+
+    /// MR applied to damper/LuGre/bump elements (1 = legacy wheel-coordinate elements).
+    double damper_motion_ratio(int i, double x) const {
+        return params_.suspension.mr_applies_to_dampers ? motion_ratio_at(i, x) : 1.0;
+    }
+
+    /// Spring stroke s(x) = ∫_0^x MR(u) du (exact for the piecewise-linear table).
+    double spring_stroke(int i, double x) const {
+        const auto& t = params_.suspension.motion_ratio_table_travel;
+        const auto& m = params_.suspension.motion_ratio_table[i];
+        if (t.empty()) return params_.suspension.motion_ratio[i] * x;
+        auto integral_from_t0 = [&](double q) {
+            if (q <= t[0]) return m[0] * (q - t[0]);
+            double acc = 0.0;
+            for (size_t k = 1; k < t.size(); ++k) {
+                if (q <= t[k]) return acc + 0.5 * (m[k - 1] + motion_ratio_at(i, q)) * (q - t[k - 1]);
+                acc += 0.5 * (m[k - 1] + m[k]) * (t[k] - t[k - 1]);
+            }
+            return acc + m.back() * (q - t.back());
+        };
+        return integral_from_t0(x) - integral_from_t0(0.0);
+    }
+private:
 
     /// @brief フレームねじりを考慮した前後ロール角の計算（Phase A1）
     /// @param phi_body 車体ロール角 [rad]
@@ -957,8 +1074,11 @@ private:
         // 1. アッカーマン幾何による舵角
         auto steer_ackermann = compute_ackermann_steering(delta_driver, params_.steering.ackermann);
 
-        // 2. コンプライアンスステアによる補正
+        // 2. コンプライアンスステアによる補正（K&C が Mz→toe を持つ輪は二重計上を避けて無効, #6）
         auto steer_compliance = compute_compliance_steer(Mz_wheels[FL], Mz_wheels[FR]);
+        for (int i = 0; i < 4; ++i) {
+            if (!uses_steering_stiffness_compliance(i)) steer_compliance[i] = 0.0;
+        }
 
         // 3. 合計（ドライバー入力 + コンプライアンス）
         std::array<double, 4> steer_total;
@@ -969,10 +1089,22 @@ private:
         return steer_total;
     }
 
+    double wheel_spin_inertia(int i) const {
+        return (params_.mass.Iw_corner[i] > 0.0) ? params_.mass.Iw_corner[i] : params_.mass.Iw;
+    }
+
+    /// K_steer path is deprecated in favour of the K&C 6xn compliance matrix; it is
+    /// only used where K&C does not already map Mz to toe (#6).
+    bool uses_steering_stiffness_compliance(int i) const {
+        const auto& kc = params_.suspension.kc_corners[i];
+        return i < 2 && !(kc.valid && kc.compliance.toe_per_load[5] != 0.0);
+    }
+
     // ======== キャンバー角・トー角計算（ガイド §2.4） ========
     // compute_camber_angle()とcompute_pou_displacement()はテスト用にpublicに移動済み
 
-    /// @brief 各輪のトー角を計算
+public:
+    /// @brief 各輪のトー角を計算（テスト用にpublic）
     /// @param wheel_index 車輪インデックス
     /// @return トー角 [rad] (正: トーイン)
     double compute_toe_angle(
@@ -990,7 +1122,10 @@ private:
                 toe = eval_quadratic(kc.kinematics.toe_vs_travel, susp_travel_from_eq);
             }
             toe += eval_quadratic(kc.kinematics.toe_vs_steer, steer_angle);
-            toe += kc.kinematics.roll_steer_gain * axle_roll_angle;
+            // Same residual rule as roll_camber_gain (#38).
+            if (is_zero_polynomial(kc.kinematics.toe_vs_travel)) {
+                toe += kc.kinematics.roll_steer_gain * axle_roll_angle;
+            }
 
             for (int i = 0; i < 6; ++i) {
                 toe += kc.compliance.toe_per_load[i] * kc_loads[i];
@@ -1003,6 +1138,7 @@ private:
         const std::array<double, 6> zero_loads = {0.0, 0.0, static_Fz_[wheel_index], 0.0, 0.0, 0.0};
         return compute_toe_angle(wheel_index, 0.0, 0.0, 0.0, zero_loads);
     }
+private:
 
     double compute_effective_relaxation_length(bool longitudinal, double fz, double tire_temp_c) const {
         const auto& relax = params_.tire.relaxation;
@@ -1029,16 +1165,34 @@ private:
              + axle.roll_center_height_per_roll * body_roll_angle;
     }
 
-    double compute_pitch_force_arm_for_wheel(int wheel_index, double fx_wheel) const {
-        const auto& axle = (wheel_index < 2) ? params_.suspension.kc_front : params_.suspension.kc_rear;
-        const bool driving = fx_wheel >= 0.0;
-        const double anti_pct = driving ? axle.anti_drive_pct : axle.anti_brake_pct;
-        return params_.mass.h_cg * (1.0 - std::clamp(anti_pct, 0.0, 1.0));
-    }
-
-    double compute_effective_jacking_force(int wheel_index, double fy_wheel) const {
-        const auto& kc = params_.suspension.kc_corners[wheel_index];
-        return kc.valid ? (kc.kinematics.jacking_force_per_fy * fy_wheel) : 0.0;
+    /// Vertical link force [N, upward on body] carried by the suspension links (#9).
+    ///
+    /// The tyre forces act on the body with the full h_cg arm; the links carry
+    ///   - lateral: the roll-centre (geometric) share, F = k_jack*Fy with
+    ///     k_jack = jacking_force_per_fy (K&C) or derived -sign(y)*h_rc/(t/2),
+    ///   - longitudinal: the anti share, F = -/+ Fx*anti*h_cg/L (front/rear).
+    /// Added to F_susp like a spring force, so the total load transfer stays
+    /// m*a*h_cg/(L or t) independent of RC height / anti% — they only move the
+    /// split between springs (elastic) and links (geometric).
+    double compute_link_force(int i, double fx_body, double fy_body,
+                              const std::array<double, 4>& susp_travel_from_eq,
+                              double axle_roll_angle) const {
+        const bool front = i < 2;
+        const auto& kc = params_.suspension.kc_corners[i];
+        const auto& axle = front ? params_.suspension.kc_front : params_.suspension.kc_rear;
+        double k_jack = (kc.valid && kc.kinematics.jacking_force_per_fy != 0.0)
+            ? kc.kinematics.jacking_force_per_fy
+            : 0.0;
+        if (k_jack == 0.0 && axle.roll_center_height != 0.0) {
+            // ponytail: linear RC migration, swap for RCz(heave, roll) LUT from the K&C sweep.
+            const double half_track = 0.5 * (front ? params_.mass.track_f : params_.mass.track_r);
+            const double h_rc = compute_roll_center_height_for_wheel(i, susp_travel_from_eq, axle_roll_angle);
+            k_jack = -std::copysign(1.0, wheel_positions_[i].y()) * h_rc / half_track;
+        }
+        const double anti = std::clamp(fx_body >= 0.0 ? axle.anti_drive_pct : axle.anti_brake_pct, 0.0, 1.0);
+        const double L = params_.mass.a + params_.mass.b;
+        const double f_anti = (front ? -1.0 : 1.0) * fx_body * anti * params_.mass.h_cg / L;
+        return k_jack * fy_body + f_anti;
     }
 
     /// @brief タイヤ座標系への完全な座標変換行列を計算
@@ -1098,6 +1252,11 @@ private:
         // 定数
         const double g = 9.81;
         const double m = params_.mass.m_sprung;
+        // Unsprung masses translate with the body in x/y, so the planar EOM
+        // uses the full vehicle mass (#3). Summed from the modelled masses so
+        // static loads and translation stay consistent (== mass.m_total in artifacts).
+        const double m_trans = m + params_.mass.m_unsprung[0] + params_.mass.m_unsprung[1]
+                                 + params_.mass.m_unsprung[2] + params_.mass.m_unsprung[3];
         const double Ixx = params_.mass.Ixx;
         const double Iyy = params_.mass.Iyy;
         const double Izz = params_.mass.Izz;
@@ -1138,9 +1297,9 @@ private:
             delta_driver = input.steering;
         }
 
-        // 前ステップのセルフアライニングトルクを使用（簡易版）
-        // 注: 厳密には反復計算が必要だが、1msタイムステップでは前ステップ値で十分
-        const std::array<double, 4> steer = compute_total_steering(delta_driver, tire_Mz_);
+        // 前ステップの Mz を初期値にし、K&C fixed-point ループ内で当該 stage の Mz で更新（#6: 1 step lag 解消）
+        const auto steer_ack = compute_ackermann_steering(delta_driver, params_.steering.ackermann);
+        std::array<double, 4> steer = compute_total_steering(delta_driver, tire_Mz_);
         
         // ======== フレームねじりによるロール角分離（Phase A1）========
         // 剛体モード: K_chassis >= 1e5 Nm/deg では ω_n >> RK4安定限界のため
@@ -1158,6 +1317,8 @@ private:
         std::array<double, 4> tire_Mz_stage = {0.0, 0.0, 0.0, 0.0};
         std::array<double, 4> Fz_tire, susp_travel, dz_bw, dz_lugre;
         std::array<double, 4> susp_travel_from_eq_arr = {0.0, 0.0, 0.0, 0.0};
+        std::array<double, 4> R_eff{};
+        std::array<double, 4> tire_Mx_stage = {0.0, 0.0, 0.0, 0.0};
 
         for (int i = 0; i < 4; ++i) {
             // 各輪が「見る」ロール角（フレームねじりを考慮）
@@ -1190,35 +1351,40 @@ private:
                 pou_displacement_[i] = pou_disp;
             }
 
-            // スプリング力（pou_dispを反映）
-            double mr = params_.suspension.motion_ratio[i];
-            double k_eff = params_.suspension.k_spring[i] * mr * mr;
-            F_spring[i] = static_Fz_[i] + k_eff * effective_susp_travel_from_eq;
+            // スプリング力（pou_dispを反映）: F_wheel = MR(x)*(F_static/MR(0) + k*∫MR) (#10)
+            const double x_eff = effective_susp_travel_from_eq;
+            const double mr = motion_ratio_at(i, x_eff);
+            F_spring[i] = mr * (static_Fz_[i] / motion_ratio_at(i, 0.0)
+                                + params_.suspension.k_spring[i] * spring_stroke(i, x_eff));
             if (update_cache) {
                 spring_forces_[i] = F_spring[i];
             }
 
+            // 素子座標で評価し MR 倍でホイールへ: F_wheel = MR*F_elem(MR*x, MR*v) (#10)
+            const double mr_d = damper_motion_ratio(i, x_eff);
+
             // Bouc-Wenダンパー力（変位にPOU反映、速度はquasi-static近似で変更なし）
-            auto bw_out = compute_bouc_wen(bw_params_[i], effective_susp_travel_from_eq, susp_velocity, state.damper_z[i]);
-            F_bw[i] = bw_out.force;
+            auto bw_out = compute_bouc_wen(bw_params_[i], mr_d * x_eff, mr_d * susp_velocity, state.damper_z[i]);
+            F_bw[i] = mr_d * bw_out.force;
             dz_bw[i] = bw_out.dz_dt;
             if (update_cache) {
                 bw_forces_[i] = F_bw[i];
             }
 
             // LuGre摩擦力
-            auto lugre_out = compute_lugre(lugre_params_[i], susp_velocity, state.friction_z[i]);
-            F_lugre[i] = lugre_out.force;
+            auto lugre_out = compute_lugre(lugre_params_[i], mr_d * susp_velocity, state.friction_z[i]);
+            F_lugre[i] = mr_d * lugre_out.force;
             dz_lugre[i] = lugre_out.dz_dt;
             if (update_cache) {
                 lugre_forces_[i] = F_lugre[i];
             }
 
             // バンプストップ力（POU反映）
-            F_bump[i] = compute_bumpstop_force(effective_susp_travel_from_eq, i);
+            F_bump[i] = mr_d * compute_bumpstop_force(mr_d * x_eff, i);
             
             // タイヤ垂直力
-            double tire_deflection = state.z_u[i] - z_u_equilibrium_[i];
+            // ponytail: road height only (no road normal / dz_road/dt in tyre damping); add for kerbs.
+            double tire_deflection = state.z_u[i] - z_road_[i] - z_u_equilibrium_[i];
             double tire_velocity = state.vz_u[i];
             Fz_tire[i] = static_Fz_[i] + params_.mass.m_unsprung[i] * g
                        + k_tire * tire_deflection + c_tire * tire_velocity;
@@ -1226,6 +1392,7 @@ private:
             if (update_cache) {
                 tire_Fz_[i] = Fz_tire[i];
             }
+            R_eff[i] = compute_effective_rolling_radius(Fz_tire[i]);
             
             // タイヤ滑り計算（完全な座標変換）
             // ガイド §2.4: 車体系 → サスペンション系 → ホイール系 → タイヤ接地点系
@@ -1247,14 +1414,20 @@ private:
             double camber = params_.suspension.static_camber[i];
             double toe = params_.suspension.static_toe[i];
 
-            const int kc_iterations = wheel_uses_load_sensitive_kinematics(i) ? 2 : 1;
+            const bool ksteer = uses_steering_stiffness_compliance(i);
+            const int kc_iterations = (wheel_uses_load_sensitive_kinematics(i) || ksteer) ? 2 : 1;
             for (int kc_iter = 0; kc_iter < kc_iterations; ++kc_iter) {
-                camber = compute_camber_angle(i, effective_susp_travel_from_eq, steer[i], axle_roll_angle, kc_loads);
-                toe = compute_toe_angle(i, effective_susp_travel_from_eq, steer[i], axle_roll_angle, kc_loads);
+                if (kc_iter > 0 && ksteer) {
+                    steer[i] = steer_ack[i] + tire_Mz_stage[i] / params_.steering.stiffness;
+                }
+                // Kinematics follow the wheel-to-body stroke (state), not the
+                // POU pushrod-length change (#38); springs keep effective_*.
+                camber = compute_camber_angle(i, susp_travel_from_eq, steer[i], axle_roll_angle, kc_loads);
+                toe = compute_toe_angle(i, susp_travel_from_eq, steer[i], axle_roll_angle, kc_loads);
 
                 // POUによるキャンバー変化を保存（デバッグ用: 総キャンバーから静的分を引く）
                 double static_camber_component = params_.suspension.static_camber[i]
-                                               + params_.suspension.camber_gain[i] * effective_susp_travel_from_eq;
+                                               + params_.suspension.camber_gain[i] * susp_travel_from_eq;
                 if (update_cache) {
                     pou_camber_[i] = camber - static_camber_component;
                 }
@@ -1268,7 +1441,7 @@ private:
                 double vx_wheel = v_wheel_vec.x();
                 double vy_wheel = v_wheel_vec.y();
                 
-                double omega_r = state.omega[i] * params_.tire.radius;
+                double omega_r = state.omega[i] * R_eff[i];
                 double vsx = vx_wheel - omega_r;
                 double vsy = vy_wheel;
                 double vcx = std::abs(omega_r);
@@ -1326,6 +1499,7 @@ private:
                     tire_Fx_stage[i] = nn_forces.Fx;
                     tire_Fy_stage[i] = nn_forces.Fy;
                     tire_Mz_stage[i] = nn_forces.Mz;
+                    tire_Mx_stage[i] = nn_forces.Mx;
 
                 } else if (mf_model_loaded_) {
                     // === Magic Formula タイヤモデル (with Relaxation Length) ===
@@ -1418,7 +1592,7 @@ private:
                     dxdt(28 + i) = tire_out.deta_dt;
                 }
 
-                kc_loads = {tire_Fx_stage[i], tire_Fy_stage[i], Fz_tire[i], 0.0, 0.0, tire_Mz_stage[i]};
+                kc_loads = {tire_Fx_stage[i], tire_Fy_stage[i], Fz_tire[i], tire_Mx_stage[i], 0.0, tire_Mz_stage[i]};
             }
 
             if (update_cache) {
@@ -1434,22 +1608,13 @@ private:
         }
 
         for (int i = 0; i < 4; ++i) {
-            F_jacking[i] = compute_effective_jacking_force(i, tire_Fy_stage[i]);
+            F_jacking[i] = compute_link_force(i, Fx_wheel[i], Fy_wheel[i], susp_travel_from_eq_arr,
+                                              (i < 2) ? phi_front : phi_rear);
         }
         
         // ======== ARB力 ========
         // ばね下にも作用するため、ばね下EOM前に計算
         auto F_arb = compute_arb_forces(susp_travel);
-        
-        // ばね下運動方程式
-        for (int i = 0; i < 4; ++i) {
-            double m_u = params_.mass.m_unsprung[i];
-            double F_susp_on_unsprung = F_spring[i] + F_bw[i] + F_lugre[i] + F_bump[i] + F_jacking[i] + F_arb[i];
-            double az_u = g + (F_susp_on_unsprung - Fz_tire[i]) / m_u;
-            
-            dxdt(12 + i) = state.vz_u[i];
-            dxdt(16 + i) = az_u;
-        }
         
         // ======== 合計力・モーメント ========
         double Fx_total = 0, Fy_total = 0, Fz_total = 0;
@@ -1465,17 +1630,30 @@ private:
             F_susp_each[i] = F_susp;
             Fz_total -= F_susp;
 
-            const double roll_center_height = compute_roll_center_height_for_wheel(i, susp_travel_from_eq_arr, (i < 2) ? phi_front : phi_rear);
-            roll_moment_arm[i] = std::max(0.0, h_cg - roll_center_height);
-            pitch_moment_arm[i] = compute_pitch_force_arm_for_wheel(i, Fx_wheel[i]);
+            // Full arms: RC height and anti% enter as link forces in F_susp (#9).
+            roll_moment_arm[i] = h_cg;
+            pitch_moment_arm[i] = h_cg;
         }
 
         const auto body_moments = compute_body_moment_contributions(
             wheel_pos, Fx_wheel, Fy_wheel, F_susp_each,
             roll_moment_arm, pitch_moment_arm, tire_Mz_stage);
-        double Mx_total = body_moments.Mx;
+        // Tyre overturning moment is reacted through the suspension into the body (#12).
+        double Mx_total = body_moments.Mx + tire_Mx_stage[0] + tire_Mx_stage[1]
+                        + tire_Mx_stage[2] + tire_Mx_stage[3];
         double My_total = body_moments.My;
         double Mz_total = body_moments.Mz;
+
+        // Wheel gyroscopic moments (#13); front-wheel kingpin (z) part also feeds steering.
+        std::array<double, 2> T_gyro_kingpin{};
+        for (int i = 0; i < 4; ++i) {
+            const Eigen::Vector3d M_gyro = compute_wheel_gyro_moment(
+                wheel_spin_inertia(i), state.omega[i], (i < 2) ? steer[i] : 0.0, omega_body);
+            Mx_total += M_gyro.x();
+            My_total += M_gyro.y();
+            Mz_total += M_gyro.z();
+            if (i < 2) T_gyro_kingpin[i] = M_gyro.z();
+        }
         
         // ======== 空力（4D AeroMap） ========
         double v_magnitude = std::sqrt(state.vx * state.vx + state.vy * state.vy);
@@ -1516,13 +1694,38 @@ private:
         My_total += aero_result.My;  // ピッチモーメント
         Mz_total += aero_result.Mz;  // ヨーモーメント
         
+        // ======== ばね下横慣性（#3 第二段階）========
+        // The unsprung lateral inertia m_u*a_y is reacted directly at the tyres
+        // (arm = wheel-centre height), not through the sprung roll moment.
+        const double a_lat = Fy_total / m_trans;
+        const double R_wc = params_.tire.radius;
+        std::array<double, 4> F_unsprung_lt{};
+        for (int i = 0; i < 4; ++i) {
+            Mx_total += params_.mass.m_unsprung[i] * a_lat * roll_moment_arm[i];
+            const int j = (i < 2) ? 1 - i : 5 - i;  // same-axle partner
+            const double track = (i < 2) ? params_.mass.track_f : params_.mass.track_r;
+            const double m_axle = params_.mass.m_unsprung[i] + params_.mass.m_unsprung[j];
+            // y<0 (left) is the outer wheel for a_lat>0 (right turn): load increases.
+            F_unsprung_lt[i] = -std::copysign(1.0, wheel_pos[i].y()) * m_axle * a_lat * R_wc / track;
+        }
+
+        // ばね下運動方程式
+        for (int i = 0; i < 4; ++i) {
+            double m_u = params_.mass.m_unsprung[i];
+            double F_susp_on_unsprung = F_spring[i] + F_bw[i] + F_lugre[i] + F_bump[i] + F_jacking[i] + F_arb[i];
+            double az_u = g + (F_susp_on_unsprung + F_unsprung_lt[i] - Fz_tire[i]) / m_u;
+
+            dxdt(12 + i) = state.vz_u[i];
+            dxdt(16 + i) = az_u;
+        }
+
         // ======== 重力 ========
         Eigen::Vector3d g_inertial(0, 0, g);
         Eigen::Vector3d g_body = R * g_inertial;
         
         // ======== ばね上運動方程式 ========
-        double ax = Fx_total / m + g_body.x() + state.r * state.vy - state.q * state.vz;
-        double ay = Fy_total / m + g_body.y() - state.r * state.vx + state.p * state.vz;
+        double ax = Fx_total / m_trans + g_body.x() + state.r * state.vy - state.q * state.vz;
+        double ay = Fy_total / m_trans + g_body.y() - state.r * state.vx + state.p * state.vz;
         double az = Fz_total / m + g_body.z() + state.q * state.vx - state.p * state.vy;
         
         dxdt(6) = ax;
@@ -1562,8 +1765,6 @@ private:
         dxdt(10) = (My_total - gyro_pitch - coupling_pitch) / Iyy;
         
         // ======== 車輪回転 ========
-        double Iw = params_.mass.Iw;
-        double R_tire = params_.tire.radius;
         
         // 後輪平均回転数からエンジンRPMを計算
         double omega_rear_avg = (state.omega[RL] + state.omega[RR]) / 2.0;
@@ -1572,9 +1773,16 @@ private:
         // エンジントルク計算（トルクカーブ参照）
         double engine_torque = engine_map_.get_torque(engine_rpm, input.throttle);
         
-        // 駆動トルク（総減速比と効率を考慮）
+        // 駆動トルク（総減速比と効率を考慮）。変速中は遮断（#4）
         double total_ratio = gear_ratios_.get_total_ratio(input.gear);
-        double total_drive_torque = engine_torque * total_ratio * params_.powertrain.efficiency;
+        double total_drive_torque = (time_ < shift_end_time_)
+            ? 0.0
+            : engine_torque * total_ratio * params_.powertrain.efficiency;
+        // Engine/gearbox inertia reflected to the rear wheels, split evenly (#4).
+        // ponytail: kinematic engine (no clutch slip state); add an engine-speed state for launches.
+        // During a shift the clutch is open: no torque and no engine inertia on the wheels.
+        const double I_reflected_rear = (time_ < shift_end_time_) ? 0.0 : 0.5 * (params_.powertrain.I_engine * total_ratio * total_ratio
+            + params_.powertrain.I_gearbox * gear_ratios_.final_ratio * gear_ratios_.final_ratio);
         
         // LSDによる左右トルク配分
         double torque_RL, torque_RR;
@@ -1586,8 +1794,9 @@ private:
             torque_RR
         );
         
-        // ブレーキ圧力（input.brakeから）
-        double brake_pressure = input.brake * params_.brake.max_pressure;
+        // ブレーキ最大トルク（ライン圧の1次遅れは step() で ZOH 更新）
+        const auto T_brake_max = compute_brake_torque_max(
+            params_.brake.pressure_lag_s > 0.0 ? brake_pressure_lagged_ : compute_brake_pressure_cmd(input.brake));
 
         for (int i = 0; i < 4; ++i) {
             double T_drive = 0.0;
@@ -1598,18 +1807,18 @@ private:
             }
             // 前輪（FL, FR）は駆動力なし
 
-            // ブレーキトルク（回転と逆向き）
-            double T_brake = brake_pressure
-                           * params_.brake.caliper_area[i]
-                           * params_.brake.mu_pad
-                           * params_.brake.effective_radius[i];
-            T_brake *= (i < 2) ? params_.brake.balance : (1.0 - params_.brake.balance);
-            T_brake = std::copysign(T_brake, -state.omega[i]);
+            // ブレーキトルク（回転と逆向き）。tanh 平滑化で停止時の符号反転チャタリングを防ぐ (#36)
+            // ponytail: viscous near ω=0 (creeps under a net torque), add stick clamp if hill holds matter.
+            double T_brake = -T_brake_max[i] * std::tanh(state.omega[i] / params_.brake.omega_smooth);
 
-            // タイヤ座標系の縦力を直接使用
-            double T_tire = -tire_Fx_stage[i] * R_tire;
+            // タイヤ座標系の縦力を直接使用（有効転がり半径, #12）
+            double T_tire = -tire_Fx_stage[i] * R_eff[i];
 
-            dxdt(20 + i) = (T_drive + T_brake + T_tire) / Iw;
+            // 転がり抵抗モーメント（#12）
+            constexpr double omega_rr = 0.5;  // [rad/s] smoothing through zero speed
+            double T_rr = -params_.tire.C_rr * Fz_tire[i] * R_eff[i] * std::tanh(state.omega[i] / omega_rr);
+
+            dxdt(20 + i) = (T_drive + T_brake + T_tire + T_rr) / (wheel_spin_inertia(i) + (i >= RL ? I_reflected_rear : 0.0));
         }
         
         // ======== フレームねじりダイナミクス（Phase A1）========
@@ -1640,14 +1849,25 @@ private:
             dxdt(41) = ddphi_twist;
         }
 
+        // ======== キングピン軸トルク（#5）========
+        std::array<double, 2> T_kingpin{};
+        for (int i = 0; i < 2; ++i) {
+            const auto& kc = params_.suspension.kc_corners[i];
+            T_kingpin[i] = compute_kingpin_torque(
+                tire_Mz_stage[i], tire_Fx_stage[i], tire_Fy_stage[i],
+                kc.mechanical_trail, kc.caster, kc.scrub_radius,
+                std::copysign(1.0, wheel_pos[i].y())) + T_gyro_kingpin[i];
+        }
+        if (update_cache) kingpin_torque_ = T_kingpin;
+
         // ======== ステアリングホイールダイナミクス（Phase A2）========
         if (params_.steering.torque_mode) {
             // トルクモード: ステアリング運動方程式を解く
 
-            // セルフアライニングトルク合計（操舵軸へ戻る前輪のみ、ホイール座標系）
-            // Signed tire Mz sum: positive for a left turn and negative for a
-            // right turn. compute_steering_acceleration adds it as restoring torque.
-            double T_SAT_total = (tire_Mz_stage[FL] + tire_Mz_stage[FR]);
+            // 前輪キングピン軸トルク合計（Mz + 機械トレール + スクラブ）
+            // Signed: positive for a left turn and negative for a right turn.
+            // compute_steering_acceleration adds it as restoring torque.
+            double T_SAT_total = T_kingpin[0] + T_kingpin[1];
 
             // ドライバー入力トルク（input.steeringをトルクとして解釈）
             double T_driver = input.steering;
