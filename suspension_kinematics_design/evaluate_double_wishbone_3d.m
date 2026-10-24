@@ -296,8 +296,17 @@ metrics.camber_vs_travel = ensure_quadratic(camberTravelCoeffs);
 metrics.toe_vs_travel = ensure_quadratic(toeTravelCoeffs);
 metrics.camber_vs_steer = ensure_quadratic(camberSteerCoeffs);
 metrics.toe_vs_steer = ensure_quadratic(toeSteerCoeffs);
-metrics.roll_camber_gain = safe_linear_coeff(rollSamples, leftRollCamber);
-metrics.roll_steer_gain = safe_linear_coeff(rollSamples, leftRollToe);
+% Roll gains are residuals after removing what camber/toe_vs_travel already
+% give at the roll-induced travel (runtime evaluates both; #38). The single-
+% corner roll pose equals a heave pose, so the residual is only fit error.
+rollTravelFromEq = -halfTrack * rollSamples;
+rollCamberResidual = leftRollCamber - polyval(camberTravelCoeffs, rollTravelFromEq);
+rollToeResidual = leftRollToe - polyval(toeTravelCoeffs, rollTravelFromEq);
+metrics.roll_camber_gain = safe_linear_coeff(rollSamples, rollCamberResidual);
+metrics.roll_steer_gain = safe_linear_coeff(rollSamples, rollToeResidual);
+metrics.roll_camber_gain_total = safe_linear_coeff(rollSamples, leftRollCamber);
+metrics.roll_steer_gain_total = safe_linear_coeff(rollSamples, leftRollToe);
+metrics.roll_gain_definition = 'residual_after_travel_curve';
 metrics.roll_center_height_per_travel = rcTravelCoeffs(1);
 metrics.roll_center_height_per_roll = rcRollCoeffs(1);
 metrics.jacking_force_per_fy = staticMetrics.roll_center_z / max(halfTrack, 1e-6);

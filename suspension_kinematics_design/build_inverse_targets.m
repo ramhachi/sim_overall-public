@@ -90,11 +90,12 @@ if isfield(params.suspension, 'design_targets') && isfield(params.suspension.des
     end
 end
 
-% Derived targets keep the objective self-consistent: roll camber gain is
-% determined by camber gain and half track, jacking by roll-center height.
+% Derived targets keep the objective self-consistent: roll camber gain is the
+% residual after camber_vs_travel(travel(phi)) is removed, so it is zero for
+% a chassis-relative corner model; jacking follows roll-center height.
 if strncmp(sources.roll_camber_gain, 'fallback', 8)
-    targets.roll_camber_gain = -targets.camber_vs_travel(2) * max(halfTrack, 1e-6);
-    sources.roll_camber_gain = 'derived_from_camber_gain_and_half_track';
+    targets.roll_camber_gain = 0.0;
+    sources.roll_camber_gain = 'derived_residual_after_camber_vs_travel';
 end
 if strncmp(sources.jacking_force_per_fy, 'fallback', 8)
     targets.jacking_force_per_fy = targets.roll_center_z / max(halfTrack, 1e-6);
