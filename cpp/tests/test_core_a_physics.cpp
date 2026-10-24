@@ -67,22 +67,32 @@ TEST(CoreAReport, KeyNumbers) {
     EXPECT_TRUE(std::isfinite(skid.ay));
 }
 
-// #3: planar EOM uses the full vehicle mass. In steady cornering vx*r = sum(Fy)/m_total.
+// #3: planar EOM uses the full vehicle mass: sum(Fy_body) = m_total * (dvy/dt + r*vx - g_y).
 TEST(CoreA_Mass, SkidpadLateralAccelUsesTotalMass) {
     VehicleParams p = VehicleParams::default_fsae();
-    p.tire.C_rr = 0.0;  // keep the coast steady so dvy/dt ~ 0
+    p.steering.ackermann = 0.0;  // both fronts at the same angle for the body-frame projection
+    p.aero.CL_A = 0.0;
     Vehicle14DOF_New veh(p);
     veh.set_initial_velocity(12.0);
     DriverInput in;
     in.steering = 0.03;
     in.gear = 3;
     for (int k = 0; k < 4000; ++k) veh.step(0.001, in);
+    const double vy0 = veh.state().vy;
+    veh.step(0.001, in);
     const auto& s = veh.state();
-    double fy = 0.0;
-    for (double f : veh.get_tire_Fy()) fy += f;
+    const auto Fx = veh.get_tire_Fx();
+    const auto Fy = veh.get_tire_Fy();
+    double fy_body = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        const double d = (i < 2) ? in.steering : 0.0;
+        fy_body += Fy[i] * std::cos(d) + Fx[i] * std::sin(d);
+    }
+    const double g_y = 9.81 * std::sin(s.phi) * std::cos(s.theta);
+    const double a_y = (s.vy - vy0) / 0.001 + s.r * s.vx - g_y;
     const double m_total = p.mass.m_sprung + p.mass.m_unsprung[0] + p.mass.m_unsprung[1]
                          + p.mass.m_unsprung[2] + p.mass.m_unsprung[3];
-    EXPECT_NEAR(fy / (s.vx * s.r), m_total, 0.03 * m_total);
+    EXPECT_NEAR(fy_body / a_y, m_total, 0.01 * m_total);  // was m_sprung (230 kg) before #3
 }
 
 // #38: roll gains are residuals; with a travel polynomial present they must not add again.

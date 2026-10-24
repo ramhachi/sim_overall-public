@@ -135,3 +135,12 @@ TEST(EulerIntegration, ClampedHighPitchStaysFinite) {
     EXPECT_TRUE(std::isfinite(vehicle.state().q));
     EXPECT_TRUE(std::isfinite(vehicle.state().vx));
 }
+
+// #13: wheel gyroscopic moment signs (SAE, forward rolling omega > 0).
+TEST(BodyMoments, WheelGyroRollsOutwardAndSteersIntoLean) {
+    const double Iw = 0.5, omega = 88.0;
+    const auto yaw = compute_wheel_gyro_moment(Iw, omega, 0.0, Eigen::Vector3d(0, 0, 1.0));
+    EXPECT_NEAR(yaw.x(), -Iw * omega, 1e-9);  // right turn: roll moment toward the outside (left)
+    const auto roll = compute_wheel_gyro_moment(Iw, omega, 0.0, Eigen::Vector3d(0.5, 0, 0));
+    EXPECT_NEAR(roll.z(), Iw * omega * 0.5, 1e-9);  // roll right -> kingpin torque steers right
+}

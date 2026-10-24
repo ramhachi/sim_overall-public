@@ -182,6 +182,6 @@ TEST_F(SteeringTorqueTest, KingpinTorqueExposedInAngleMode) {
     const auto Tk = vehicle.get_kingpin_torque();
     const auto Mz = vehicle.get_tire_Mz();
     const auto Fy = vehicle.get_tire_Fy();
-    EXPECT_NEAR(Tk[0], Mz[0] - 0.02 * Fy[0], 1e-9);
+    EXPECT_NEAR(Tk[0], Mz[0] - 0.02 * Fy[0], 0.5);  // + small wheel-gyro term (#13)
     EXPECT_GT(Tk[0] + Tk[1], Mz[0] + Mz[1]);  // trail adds restoring torque in a left turn
 }

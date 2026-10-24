@@ -1021,6 +1021,10 @@ private:
         return steer_total;
     }
 
+    double wheel_spin_inertia(int i) const {
+        return (params_.mass.Iw_corner[i] > 0.0) ? params_.mass.Iw_corner[i] : params_.mass.Iw;
+    }
+
     /// K_steer path is deprecated in favour of the K&C 6xn compliance matrix; it is
     /// only used where K&C does not already map Mz to toe (#6).
     bool uses_steering_stiffness_compliance(int i) const {
@@ -1566,6 +1570,17 @@ private:
                         + tire_Mx_stage[2] + tire_Mx_stage[3];
         double My_total = body_moments.My;
         double Mz_total = body_moments.Mz;
+
+        // Wheel gyroscopic moments (#13); front-wheel kingpin (z) part also feeds steering.
+        std::array<double, 2> T_gyro_kingpin{};
+        for (int i = 0; i < 4; ++i) {
+            const Eigen::Vector3d M_gyro = compute_wheel_gyro_moment(
+                wheel_spin_inertia(i), state.omega[i], (i < 2) ? steer[i] : 0.0, omega_body);
+            Mx_total += M_gyro.x();
+            My_total += M_gyro.y();
+            Mz_total += M_gyro.z();
+            if (i < 2) T_gyro_kingpin[i] = M_gyro.z();
+        }
         
         // ======== 空力（4D AeroMap） ========
         double v_magnitude = std::sqrt(state.vx * state.vx + state.vy * state.vy);
@@ -1730,8 +1745,7 @@ private:
             constexpr double omega_rr = 0.5;  // [rad/s] smoothing through zero speed
             double T_rr = -params_.tire.C_rr * Fz_tire[i] * R_eff[i] * std::tanh(state.omega[i] / omega_rr);
 
-            const double Iw_i = (params_.mass.Iw_corner[i] > 0.0) ? params_.mass.Iw_corner[i] : params_.mass.Iw;
-            dxdt(20 + i) = (T_drive + T_brake + T_tire + T_rr) / (Iw_i + (i >= RL ? I_reflected_rear : 0.0));
+            dxdt(20 + i) = (T_drive + T_brake + T_tire + T_rr) / (wheel_spin_inertia(i) + (i >= RL ? I_reflected_rear : 0.0));
         }
         
         // ======== フレームねじりダイナミクス（Phase A1）========
@@ -1769,7 +1783,7 @@ private:
             T_kingpin[i] = compute_kingpin_torque(
                 tire_Mz_stage[i], tire_Fx_stage[i], tire_Fy_stage[i],
                 kc.mechanical_trail, kc.caster, kc.scrub_radius,
-                std::copysign(1.0, wheel_pos[i].y()));
+                std::copysign(1.0, wheel_pos[i].y())) + T_gyro_kingpin[i];
         }
         if (update_cache) kingpin_torque_ = T_kingpin;
 
