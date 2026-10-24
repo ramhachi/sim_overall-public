@@ -185,6 +185,19 @@ int run_selftest() {
         check("mechanism is reported", threw ? 1.0 : 0.0, 1.0, 0.0);
     }
 
+    {   // 8. K_torsion from a +-F couple on a rigid jig: K = (F * arm) / theta[deg], theta = T L / (G J)
+        const double L = 0.5, h = 0.2, F = 500.0;
+        json in = cantilever({1, 0, 0}, L, 2, round);
+        in["nodes"].push_back({L, -h, 0.0});
+        in["nodes"].push_back({L, h, 0.0});
+        in["rigid_links"] = {{3, 4}, {3, 5}};
+        in["loads"].push_back({4, 3, F});
+        in["loads"].push_back({5, 3, -F});
+        const double Tq = 2 * h * F, theta = Tq * L / (Gp * J);
+        check("K_torsion from applied couple", fo::solve_json(in)["K_torsion"].get<double>(),
+              Tq / (theta * 180 / fo::kPi), 1e-9);
+    }
+
     std::cout << (g_failures ? "SELFTEST FAILED" : "SELFTEST PASSED") << " (" << g_failures << " failures)\n";
     return g_failures;
 }

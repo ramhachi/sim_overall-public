@@ -317,6 +317,15 @@ Closed-form checks: `beam_fem_standalone --selftest` (CTest `beam_fem_closed_for
   over all non-torsion cases (defaults 50/50). SES equivalence uses `rulebook_baseline` in
   `data/materials.json` (F.3.4.2 values 200 GPa / 305 / 365 MPa, verify against the current rules).
   Not yet: transverse shear stress, local D/t buckling, fatigue (rainflow/Miner is P1 post-processing).
+* **Torsion fixture / GA (#51)**: `config.torsion_fixture = '321'` (canonical default) adds a rigid hub per
+  corner tied to its 4 mounts, supports the rear hubs 3-2-1 (RL x,y,z,pitch; RR x,z; statically determinate)
+  and applies ±F at the front hubs (torque = F·hub track exactly). `'pinned'` keeps the old 8-point rear
+  clamp, now with the couple arm taken from the L/R centroids so the applied torque is the nominal 1000 N·m;
+  K_torsion uses the actual applied moment ΣF_z(y − y_mid). With `LoadCaseEvalMode='torsion_only'`,
+  `mixed_ga` re-scores its 15 % elites with all cases each generation (`FullCaseElites`, default on for V2;
+  `matlab_ga` still only re-evaluates the final best). `config.lumped_masses` ([x y z kg] rows) join the
+  CG term (`results.system_cg_z`); no component masses are in the repo data, so the default is frame-only.
+  Modal analysis of finalists: follow-up.
 * **Constraints / attachments (#52)**: BCs are eliminated (no 1e15 penalty); `rigid_links` (JSON key /
   MEX `options.rigid_links`, node pairs) merge into rigid bodies solved master–slave (RBE2); a BC on a
   slave DOF becomes a Lagrange row (rank-revealing QR fallback for redundant pins); mechanisms raise an

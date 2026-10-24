@@ -124,6 +124,19 @@ assert(abs(nodes(mh_top, 3) - max(nodes(meta.main_hoop_idx, 3))) < 1e-12, 'MH to
 roll_sum = arrayfun(@(d) sum(roll_case.loads(roll_case.loads(:, 2) == d, 3)), 1:3);
 assert(max(abs(roll_sum - [6000, 5000, -9000])) < 1e-9, 'Rollover must use the rule main-hoop load.');
 
+% 3-2-1 torsion fixture (#51): rigid hubs per corner, 6 support DOFs, couple = nominal torque
+fix_config = node_config;
+fix_config.torsion_fixture = '321';
+fix_cases = generate_load_cases(nodes, geom.dimensions.total_mass_kg, 9.81, fix_config);
+tc = fix_cases(1);
+assert(size(tc.extra_nodes, 1) == 4 && size(tc.rigid_links, 1) == 16, '4 hubs x 4 mounts');
+assert(size(tc.bcs, 1) == 6, '3-2-1 support must constrain exactly 6 DOFs');
+hub_y = tc.extra_nodes(tc.loads(:, 1) - size(nodes, 1), 2);
+assert(abs(abs(sum(hub_y .* tc.loads(:, 3))) - 1000) < 1e-9, 'Applied couple must equal the nominal 1000 N*m');
+tor = cases(strcmp(case_names, 'torsion'));
+applied = sum(nodes(tor.loads(:, 1), 2) .* tor.loads(:, 3));
+assert(abs(abs(applied) - 1000) < 1e-9, 'Pinned fixture couple must also equal the nominal torque');
+
 % Load-case file replaces the fixed-g proxies and keeps its source tag (#49).
 file_config = node_config;
 file_config.file_cases = import_frame_load_cases( ...

@@ -1,4 +1,4 @@
-function [bcs, loads] = generate_fsae_boundary_conditions(nodes, load_case_name, config)
+function [bcs, loads, fixture] = generate_fsae_boundary_conditions(nodes, load_case_name, config)
 % GENERATE_FSAE_BOUNDARY_CONDITIONS Generate physically correct BCs for FSAE frame
 %
 % Generates boundary conditions matching real FSAE torsional rigidity test setup:
@@ -22,10 +22,14 @@ function [bcs, loads] = generate_fsae_boundary_conditions(nodes, load_case_name,
 %                   .braking_g         - Braking deceleration [G] (default: 1.0)
 %                   .main_hoop_top_nodes - main-hoop top node(s) (rollover)
 %                   .rollover_force_N  - [Fx Fy Fz] at the MH top (default rule 6/5/-9 kN)
+%                   .torsion_fixture   - 'pinned' (default: all rear mounts pinned) or
+%                                        '321' (rigid per-corner hubs, 3-2-1 rear support,
+%                                        front couple at the hubs, #51)
 %
 % Outputs:
-%   bcs   - Bx3 [node_id, dof, value]
-%   loads - Lx3 [node_id, dof, value]
+%   bcs     - Bx3 [node_id, dof, value]
+%   loads   - Lx3 [node_id, dof, value]
+%   fixture - struct: extra_nodes (Kx3, appended after nodes), rigid_links (Rx2)
 %
 % DOF convention: 1=ux, 2=uy, 3=uz, 4=rx, 5=ry, 6=rz
 %
@@ -40,6 +44,7 @@ function [bcs, loads] = generate_fsae_boundary_conditions(nodes, load_case_name,
 %   while allowing the frame to twist naturally.
 
     narginchk(3, 3);
+    fixture = struct('extra_nodes', zeros(0, 3), 'rigid_links', zeros(0, 2));
     
     rear_L = config.rear_lower_nodes(1);
     rear_R = config.rear_lower_nodes(2);
@@ -81,6 +86,28 @@ function [bcs, loads] = generate_fsae_boundary_conditions(nodes, load_case_name,
     
     switch lower(load_case_name)
         case 'torsion'
+            if isfield(config, 'torsion_fixture') && strcmpi(config.torsion_fixture, '321')
+                % Rigid hub per corner (dummy upright/A-arms) tied to its 4 mounts. Rear:
+                % 3-2-1 statically determinate support (RL: x,y,z + pitch; RR: x,z), so
+                % the rear is not artificially stiffened. Front: +-F at the hubs, i.e. a
+                % jig beam with spherical ends; torque = F * hub track exactly.
+                if ~has_rear_susp
+                    error('generate_fsae_boundary_conditions:MissingRearMounts', ...
+                        'torsion_fixture=321 needs rear_susp_left_nodes/right_nodes.');
+                end
+                groups = {front_left_nodes, front_right_nodes, rear_left_nodes, rear_right_nodes};
+                n0 = size(nodes, 1);
+                for h = 1:4
+                    fixture.extra_nodes(h, :) = mean(nodes(groups{h}, :), 1);
+                    g = reshape(groups{h}, [], 1);
+                    fixture.rigid_links = [fixture.rigid_links; repmat(n0 + h, numel(g), 1), g];
+                end
+                hub = n0 + (1:4);  % FL FR RL RR
+                bcs = [hub(3) 1 0; hub(3) 2 0; hub(3) 3 0; hub(3) 5 0; hub(4) 1 0; hub(4) 3 0];
+                arm = abs(fixture.extra_nodes(1, 2) - fixture.extra_nodes(2, 2));
+                loads = [hub(1) 3 torque / arm; hub(2) 3 -torque / arm];
+                return;
+            end
             %% Torsion Test - FSAE Standard Setup
             % Fix all rear suspension mount points (simulate rigid rear axle)
             bcs = [];
@@ -103,8 +130,9 @@ function [bcs, loads] = generate_fsae_boundary_conditions(nodes, load_case_name,
                 end
             end
             
-            % Apply torque as couple force at front nodes
-            arm = abs(nodes(front_left_nodes(1), 2) - nodes(front_right_nodes(1), 2));  % Y-distance between front nodes
+            % Apply torque as couple force at front nodes. Equal forces per node, so the
+            % applied moment is F_couple times the L/R centroid distance (#51).
+            arm = abs(mean(nodes(front_left_nodes, 2)) - mean(nodes(front_right_nodes, 2)));
             
             loads = [];
             if arm > 1e-4

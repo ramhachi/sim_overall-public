@@ -228,6 +228,7 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
         [~, top] = max(nodes(on_mh, 3));
         node_config.main_hoop_top_nodes = on_mh(top);
     end
+    node_config.torsion_fixture = getConfigField(config, 'torsion_fixture', 'pinned');
     if ~isempty(getConfigField(config, 'load_cases_file', ''))
         node_config.file_cases = import_frame_load_cases(config.load_cases_file, suspension_file);
     end
@@ -332,7 +333,12 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
         provisional = true;
         provisional_reasons{end+1} = 'default cg_ref=0.300';
     end
-    f_cg = current_cg_z / cg_ref;
+    % #51: non-structural lumped masses (engine, driver, battery, ...) as rows
+    % [x y z mass_kg] in config.lumped_masses join the CG term; none are in the repo
+    % data yet, so the default is the frame-only CG (max_cg_z stays frame-only).
+    lumped = getConfigField(config, 'lumped_masses', zeros(0, 4));
+    system_cg_z = (cg_moment_z + sum(lumped(:, 3) .* lumped(:, 4))) / (total_mass_calc + sum(lumped(:, 4)));
+    f_cg = system_cg_z / cg_ref;
 
     % Mass target penalty (exceeding target mass)
     P_mass_target = 0;
@@ -441,6 +447,7 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
     results.nodes = nodes; % Pass back generated nodes
     results.elements = elements_fem; % FEM element rows actually solved
     results.cg_z = current_cg_z; % Pass back CG metadata
+    results.system_cg_z = system_cg_z; % incl. config.lumped_masses
 end
 
 function obj_val = rejectedDesignObjective(config, penalty)

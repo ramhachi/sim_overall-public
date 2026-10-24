@@ -15,6 +15,7 @@ function load_cases = generate_load_cases(nodes, mass_kg, g, node_config)
 %                 .rear_upper_nodes  - [left, right] (default: [7, 8])
 %                 .front_upper_nodes - [left, right] (default: [3, 4])
 %                 .main_hoop_top_nodes - main-hoop top node(s) for rollover
+%                 .torsion_fixture - 'pinned' (default) or '321' (#51)
 %                 .file_cases   - (optional) output of import_frame_load_cases; when
 %                                 given, its cases replace the fixed-g lateral /
 %                                 braking / diff-reaction proxies (#49). Needs
@@ -49,10 +50,12 @@ bc_config.total_mass_kg = mass_kg;
 load_cases = struct('name', {}, 'bcs', {}, 'loads', {}, 'description', {});
 
 %% Case 1: Torsional rigidity test
-[bcs_t, loads_t] = generate_fsae_boundary_conditions(nodes, 'torsion', bc_config);
+[bcs_t, loads_t, fixture_t] = generate_fsae_boundary_conditions(nodes, 'torsion', bc_config);
 load_cases(1).name = 'torsion';
 load_cases(1).bcs = bcs_t;
 load_cases(1).loads = loads_t;
+load_cases(1).extra_nodes = fixture_t.extra_nodes;  % fixture hubs (appended after nodes)
+load_cases(1).rigid_links = fixture_t.rigid_links;
 load_cases(1).description = sprintf('Torsional rigidity test (1000Nm couple at front, rear fixed)');
 
 %% Case 2: Lateral bending (cornering)

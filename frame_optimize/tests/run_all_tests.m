@@ -18,6 +18,7 @@ function run_all_tests()
         'test_frame_design_v2'
         'test_beam_fem_closed_form'
         'test_joint_corrections'
+        'test_custom_mixed_ga_elites'
         };
 
     failures = {};
