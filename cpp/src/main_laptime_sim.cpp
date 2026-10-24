@@ -2154,7 +2154,7 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
             }
             input = rl_hold_input;
             if (!driver::rl_driver_speed_limits_disabled()) {
-                driver::apply_rl_curvature_speed_limit(vehicle->state(), *track, frenet_converter, input, vehicle_params);
+                driver::apply_rl_curvature_speed_limit(vehicle->state(), *track, frenet_converter, input, vehicle_params, perf.ggv.get());
             }
             rl_driver->update_prev_action(input.steering, input.throttle, input.brake);
         } else if (use_predictive_driver) {

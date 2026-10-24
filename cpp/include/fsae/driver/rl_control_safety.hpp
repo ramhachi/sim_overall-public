@@ -78,7 +78,8 @@ inline void apply_rl_curvature_speed_limit(const vehicle::State14DOF& state,
                                            const track::CurvatureBasedTrack& track,
                                            track::FrenetConverter& converter,
                                            vehicle::DriverInput& input,
-                                           const vehicle::VehicleParams& params = vehicle::VehicleParams::default_fsae()) {
+                                           const vehicle::VehicleParams& params = vehicle::VehicleParams::default_fsae(),
+                                           const laptime::GGVMap* ggv = nullptr) {
     const double mu = std::max({params.tire.mu_x_max, params.tire.mu_y_max, 0.1});
     constexpr double g = 9.81;
     const double safety = laptime::kDefaultFrictionMargin;  // single margin (Issue #26), was 0.82
@@ -98,7 +99,12 @@ inline void apply_rl_curvature_speed_limit(const vehicle::State14DOF& state,
             s_ahead -= track.length();
         }
         const double kappa = std::min(std::abs(track.get_curvature(s_ahead)), 0.25);
-        if (kappa > 1e-4) {
+        if (kappa > 1e-4 && ggv != nullptr) {
+            // Plant-derived GGV (Issues #23/#27): same table and margin as the planner.
+            const double v_max = ggv->corner_speed(kappa, safety, 60.0);
+            const double braking_decel = std::max(0.1, safety * ggv->ax_brake(v_max, 0.0));
+            min_safe_speed = std::min(min_safe_speed, std::sqrt(v_max * v_max + 2.0 * braking_decel * d));
+        } else if (kappa > 1e-4) {
             const double radius = 1.0 / kappa;
             const double rho = params.aero.rho > 0.1 ? params.aero.rho : 1.225;
             const double denom = 1.0 / radius - 0.5 * rho * params.aero.CL_A * mu / std::max(50.0, params.mass.m_total);

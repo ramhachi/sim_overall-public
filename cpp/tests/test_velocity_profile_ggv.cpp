@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include "fsae/driver/analytic_safety_filter.hpp"
+#include "fsae/driver/attack_speed_planner.hpp"
 #include "fsae/laptime/velocity_profile.hpp"
 #include "fsae/track/track_model.hpp"
 
@@ -117,6 +119,72 @@ TEST(LapPlanner, SyntheticEllipseGGVReproducesClosedForm) {
     const double t_ggv = laptime::compute_lap_time(tabulated);
     EXPECT_LT(worst, 0.02) << "pointwise speed error";
     EXPECT_NEAR(t_ggv / t_cf, 1.0, 0.02) << "closed-form " << t_cf << " s vs GGV " << t_ggv << " s";
+}
+
+namespace {
+/// Minimal GGV with a δ_ss(v, κ) = L κ + K v² κ steady-state table.
+laptime::GGVMap steady_state_ggv(double L, double K) {
+    laptime::GGVMap g;
+    g.v = {2.0, 10.0, 20.0, 30.0};
+    g.r = {0.0, 1.0};
+    g.kappa = {0.0, 0.05, 0.1, 0.2};
+    for (double v : g.v) {
+        g.ay_max.push_back(15.0);
+        g.ax_max.push_back({10.0, 0.0});
+        g.ax_min.push_back({15.0, 0.0});
+        std::vector<double> row;
+        for (double k : g.kappa) row.push_back(L * k + K * v * v * k);
+        g.delta_ss.push_back(row);
+        g.beta_max.push_back(0.10);
+        g.r_max.push_back(15.0 / v);
+    }
+    g.validate();
+    return g;
+}
+}  // namespace
+
+// Issue #27: the safety filter takes β_max(v) / r_max(v) from the plant table when present.
+TEST(LapPlanner, AnalyticSafetyFilterUsesSteadyStateTable) {
+    driver::AnalyticSafetyConfig cfg;  // fixed fallback: β 0.16 rad
+    driver::AnalyticSafetyObservation obs;
+    obs.speed = 10.0;
+    obs.track_margin = 2.0;
+    obs.sideslip = 0.12;  // between table β_max (0.10) and the fixed 0.16
+    driver::AnalyticSafetyRequest req{0.0, 20.0, 20.0};
+
+    EXPECT_FALSE(std::isfinite(driver::AnalyticSafetyFilter(cfg).apply(req, obs, 0.01).stability_speed_cap));
+    cfg.steady_state = std::make_shared<const laptime::GGVMap>(steady_state_ggv(1.55, 0.0));
+    EXPECT_TRUE(std::isfinite(driver::AnalyticSafetyFilter(cfg).apply(req, obs, 0.01).stability_speed_cap));
+
+    obs.sideslip = 0.0;
+    obs.yaw_rate = 1.6;  // > r_max(10) = 1.5 rad/s
+    EXPECT_TRUE(std::isfinite(driver::AnalyticSafetyFilter(cfg).apply(req, obs, 0.01).stability_speed_cap));
+    obs.yaw_rate = 1.4;
+    EXPECT_FALSE(std::isfinite(driver::AnalyticSafetyFilter(cfg).apply(req, obs, 0.01).stability_speed_cap));
+}
+
+// Issue #27: δ_ss(v, κ) table drives the attack-planner steering reach cap.
+TEST(LapPlanner, AttackSteeringCapUsesSteadyStateTable) {
+    track::CurvatureBasedTrack radius_track({{0.0, 0.2}, {120.0, 0.2}}, 0.0, 0.0, 0.0, 3.0, false);
+    std::vector<laptime::VelocityPoint> profile;
+    for (int i = 0; i <= 12; ++i) {
+        laptime::VelocityPoint p{};
+        p.s = 10.0 * i;
+        p.v = 30.0;
+        profile.push_back(p);
+    }
+    auto params = vehicle::VehicleParams::default_fsae();
+    const auto phases = driver::TrackPhaseAnalyzer::analyze(radius_track, profile);
+    driver::AttackSpeedPlannerConfig cfg;
+    cfg.lateral_safety = 1.0;
+    // δ_ss = L κ + K v² κ; cap = speed where the table reaches max_angle
+    const double L = params.mass.wheelbase, K = 0.01;
+    cfg.steady_state = std::make_shared<const laptime::GGVMap>(steady_state_ggv(L, K));
+    const auto plan = driver::AttackSpeedPlanner::plan(radius_track, profile, params, phases, cfg);
+    // table is linear in v between the 10 and 20 m/s rows: solve δ(v) = max_angle on that segment
+    const double d10 = (L + K * 100.0) * 0.2, d20 = (L + K * 400.0) * 0.2;
+    const double v_star = 10.0 + 10.0 * (params.steering.max_angle - d10) / (d20 - d10);
+    EXPECT_NEAR(plan.sample_at(60.0).steering_speed_cap, v_star, 1e-6);
 }
 
 // Issue #26: one explicit margin, applied once to the lateral limit (v ∝ sqrt(m)); legacy

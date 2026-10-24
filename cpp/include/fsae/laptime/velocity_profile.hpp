@@ -210,12 +210,17 @@ private:
         return profile;
     }
 
+    /// 定常旋回に必要なタイヤ舵角（ドライバー規約: 右正 → 左旋回 κ>0 で負）。
+    /// GGV に δ_ss(v,κ) 表があればそれを使い（Issue #27）、無ければ運動学 + 定数 K_us。
     double required_tire_angle(double kappa, double speed) const {
-        const double target_ay = std::max(speed, 0.0) * std::max(speed, 0.0) * kappa;
-        return std::clamp(
-            -(perf_.wheelbase * kappa + perf_.steering_understeer_gradient * target_ay),
-            -perf_.max_tire_steer_angle,
-            perf_.max_tire_steer_angle);
+        double delta;
+        if (perf_.ggv && perf_.ggv->has_steady_state()) {
+            delta = -std::copysign(perf_.ggv->steer_angle(std::abs(kappa), speed), kappa);
+        } else {
+            const double target_ay = std::max(speed, 0.0) * std::max(speed, 0.0) * kappa;
+            delta = -(perf_.wheelbase * kappa + perf_.steering_understeer_gradient * target_ay);
+        }
+        return std::clamp(delta, -perf_.max_tire_steer_angle, perf_.max_tire_steer_angle);
     }
 
     double effective_tire_steer_rate() const {
