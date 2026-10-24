@@ -15,7 +15,7 @@ if isempty(json_file) || ~isfile(json_file)
 end
 
 tmp_files = cell(1, 2);
-design_vectors = zeros(2, 10);
+design_vectors = zeros(2, 12);  % 10 geometry + 2 pivot pitch (#45)
 try
     for k = 1:2
         tmp_files{k} = [tempname, '.json'];

@@ -302,8 +302,14 @@ R_camb = [1, 0, 0; 0, c, s; 0, -s, c];
 
 U_U = W_C + R_camb * U_U_loc;
 L_U = W_C + R_camb * L_U_loc;
-dzu = off * ds.upper_axis_pitch_tan;
-dzl = off * ds.lower_axis_pitch_tan;
+pitch_u = ds.upper_axis_pitch_tan;
+pitch_l = ds.lower_axis_pitch_tan;
+if numel(x) >= 12
+    pitch_u = x(11);
+    pitch_l = x(12);
+end
+dzu = off * pitch_u;
+dzl = off * pitch_l;
 U_F = [W_C(1) + off; U_C_y; U_C_z + dzu];
 U_R = [W_C(1) - off; U_C_y; U_C_z - dzu];
 L_F = [W_C(1) + off; L_C_y; L_C_z + dzl];

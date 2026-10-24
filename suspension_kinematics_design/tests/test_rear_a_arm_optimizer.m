@@ -13,7 +13,7 @@ fprintf('=======================================================\n');
 % --- パス設定 ---
 this_dir = fileparts(mfilename('fullpath'));
 root_dir = fileparts(this_dir); % suspension_kinematics_design/
-addpath(root_dir); % main_rear_a_arm_optimizer, a_arm_kinematics_solver
+addpath(root_dir); % main_rear_a_arm_optimizer
 addpath(fullfile(root_dir, '..', 'matlab'));
 
 json_file = resolve_default_vehicle_json(fullfile(root_dir, '..'), ...
