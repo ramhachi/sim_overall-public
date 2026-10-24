@@ -260,3 +260,9 @@ target_link_libraries(prof_fsae PRIVATE fsae_core)
 
 add_executable(prof_nn_tire src/prof_nn_tire.cpp)
 target_link_libraries(prof_nn_tire PRIVATE fsae_core)
+
+# CORE-A 14DOF runtime physics checks (physics-precision epic)
+add_executable(test_core_a_physics tests/test_core_a_physics.cpp)
+target_link_libraries(test_core_a_physics PRIVATE fsae_core GTest::gtest GTest::gtest_main)
+target_compile_definitions(test_core_a_physics PRIVATE FSAE_TEST_TIRE_MODEL_TYPE="tmeasy")
+gtest_discover_tests(test_core_a_physics)

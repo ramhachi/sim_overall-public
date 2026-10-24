@@ -1098,6 +1098,11 @@ private:
         // 定数
         const double g = 9.81;
         const double m = params_.mass.m_sprung;
+        // Unsprung masses translate with the body in x/y, so the planar EOM
+        // uses the full vehicle mass (#3). Summed from the modelled masses so
+        // static loads and translation stay consistent (== mass.m_total in artifacts).
+        const double m_trans = m + params_.mass.m_unsprung[0] + params_.mass.m_unsprung[1]
+                                 + params_.mass.m_unsprung[2] + params_.mass.m_unsprung[3];
         const double Ixx = params_.mass.Ixx;
         const double Iyy = params_.mass.Iyy;
         const double Izz = params_.mass.Izz;
@@ -1441,16 +1446,6 @@ private:
         // ばね下にも作用するため、ばね下EOM前に計算
         auto F_arb = compute_arb_forces(susp_travel);
         
-        // ばね下運動方程式
-        for (int i = 0; i < 4; ++i) {
-            double m_u = params_.mass.m_unsprung[i];
-            double F_susp_on_unsprung = F_spring[i] + F_bw[i] + F_lugre[i] + F_bump[i] + F_jacking[i] + F_arb[i];
-            double az_u = g + (F_susp_on_unsprung - Fz_tire[i]) / m_u;
-            
-            dxdt(12 + i) = state.vz_u[i];
-            dxdt(16 + i) = az_u;
-        }
-        
         // ======== 合計力・モーメント ========
         double Fx_total = 0, Fy_total = 0, Fz_total = 0;
         std::array<double, 4> F_susp_each{};
@@ -1516,13 +1511,38 @@ private:
         My_total += aero_result.My;  // ピッチモーメント
         Mz_total += aero_result.Mz;  // ヨーモーメント
         
+        // ======== ばね下横慣性（#3 第二段階）========
+        // The unsprung lateral inertia m_u*a_y is reacted directly at the tyres
+        // (arm = wheel-centre height), not through the sprung roll moment.
+        const double a_lat = Fy_total / m_trans;
+        const double R_wc = params_.tire.radius;
+        std::array<double, 4> F_unsprung_lt{};
+        for (int i = 0; i < 4; ++i) {
+            Mx_total += params_.mass.m_unsprung[i] * a_lat * roll_moment_arm[i];
+            const int j = (i < 2) ? 1 - i : 5 - i;  // same-axle partner
+            const double track = (i < 2) ? params_.mass.track_f : params_.mass.track_r;
+            const double m_axle = params_.mass.m_unsprung[i] + params_.mass.m_unsprung[j];
+            // y<0 (left) is the outer wheel for a_lat>0 (right turn): load increases.
+            F_unsprung_lt[i] = -std::copysign(1.0, wheel_pos[i].y()) * m_axle * a_lat * R_wc / track;
+        }
+
+        // ばね下運動方程式
+        for (int i = 0; i < 4; ++i) {
+            double m_u = params_.mass.m_unsprung[i];
+            double F_susp_on_unsprung = F_spring[i] + F_bw[i] + F_lugre[i] + F_bump[i] + F_jacking[i] + F_arb[i];
+            double az_u = g + (F_susp_on_unsprung + F_unsprung_lt[i] - Fz_tire[i]) / m_u;
+
+            dxdt(12 + i) = state.vz_u[i];
+            dxdt(16 + i) = az_u;
+        }
+
         // ======== 重力 ========
         Eigen::Vector3d g_inertial(0, 0, g);
         Eigen::Vector3d g_body = R * g_inertial;
         
         // ======== ばね上運動方程式 ========
-        double ax = Fx_total / m + g_body.x() + state.r * state.vy - state.q * state.vz;
-        double ay = Fy_total / m + g_body.y() - state.r * state.vx + state.p * state.vz;
+        double ax = Fx_total / m_trans + g_body.x() + state.r * state.vy - state.q * state.vz;
+        double ay = Fy_total / m_trans + g_body.y() - state.r * state.vx + state.p * state.vz;
         double az = Fz_total / m + g_body.z() + state.q * state.vx - state.p * state.vy;
         
         dxdt(6) = ax;
