@@ -110,3 +110,56 @@ TEST(CoreA_KC, RollGainNotDoubleCountedWithTravelPolynomial) {
     const double base = p.suspension.static_camber[0] + p.suspension.camber_gain[0] * travel;
     EXPECT_NEAR(veh3.compute_camber_angle(0, travel, 0.0, phi, loads), base + 0.8 * phi, 1e-12);
 }
+
+namespace {
+// Settled front-axle tyre load and pitch under steady braking.
+std::pair<double, double> braking_front_load(double anti_brake) {
+    VehicleParams p = VehicleParams::default_fsae();
+    p.suspension.kc_front.anti_brake_pct = anti_brake;
+    p.suspension.kc_rear.anti_brake_pct = anti_brake;
+    p.suspension.bw_alpha = 0.0;  // hysteresis would mask the spring/link split
+    p.aero.CL_A = 0.0;            // ride-height-sensitive aero would confound the totals
+    Vehicle14DOF_New veh(p);
+    veh.set_initial_velocity(25.0);
+    DriverInput in;
+    in.brake = 0.25;
+    in.gear = 3;
+    for (int k = 0; k < 1500; ++k) veh.step(0.001, in);
+    const auto fz = veh.get_tire_Fz();
+    return {fz[0] + fz[1], veh.state().theta};
+}
+
+// Settled lateral load-transfer moment and roll under steady cornering.
+std::pair<double, double> cornering_transfer(double h_rc) {
+    VehicleParams p = VehicleParams::default_fsae();
+    p.suspension.kc_front.roll_center_height = h_rc;
+    p.suspension.kc_rear.roll_center_height = h_rc;
+    p.suspension.bw_alpha = 0.0;
+    p.aero.CL_A = 0.0;
+    Vehicle14DOF_New veh(p);
+    veh.set_initial_velocity(12.0);
+    DriverInput in;
+    in.steering = 0.04;
+    in.gear = 3;
+    for (int k = 0; k < 3000; ++k) veh.step(0.001, in);
+    const auto fz = veh.get_tire_Fz();
+    const double m = 0.5 * p.mass.track_f * (fz[0] - fz[1]) + 0.5 * p.mass.track_r * (fz[2] - fz[3]);
+    return {m, veh.state().phi};
+}
+}  // namespace
+
+// #9: anti geometry moves load transfer from springs to links but keeps its total.
+TEST(CoreA_Anti, TotalLongitudinalTransferIndependentOfAnti) {
+    const auto [fz0, pitch0] = braking_front_load(0.0);
+    const auto [fz1, pitch1] = braking_front_load(0.6);
+    EXPECT_NEAR(fz1, fz0, 0.02 * fz0);
+    EXPECT_LT(std::abs(pitch1), 0.85 * std::abs(pitch0));  // less dive (anti acts per-wheel Fx)
+}
+
+// #9: RC height moves lateral transfer to the geometric path but keeps its total.
+TEST(CoreA_Anti, TotalLateralTransferIndependentOfRollCentre) {
+    const auto [m0, roll0] = cornering_transfer(0.0);
+    const auto [m1, roll1] = cornering_transfer(0.08);
+    EXPECT_NEAR(m1, m0, 0.03 * std::abs(m0));
+    EXPECT_LT(std::abs(roll1), 0.85 * std::abs(roll0));  // less body roll
+}

@@ -1039,16 +1039,34 @@ private:
              + axle.roll_center_height_per_roll * body_roll_angle;
     }
 
-    double compute_pitch_force_arm_for_wheel(int wheel_index, double fx_wheel) const {
-        const auto& axle = (wheel_index < 2) ? params_.suspension.kc_front : params_.suspension.kc_rear;
-        const bool driving = fx_wheel >= 0.0;
-        const double anti_pct = driving ? axle.anti_drive_pct : axle.anti_brake_pct;
-        return params_.mass.h_cg * (1.0 - std::clamp(anti_pct, 0.0, 1.0));
-    }
-
-    double compute_effective_jacking_force(int wheel_index, double fy_wheel) const {
-        const auto& kc = params_.suspension.kc_corners[wheel_index];
-        return kc.valid ? (kc.kinematics.jacking_force_per_fy * fy_wheel) : 0.0;
+    /// Vertical link force [N, upward on body] carried by the suspension links (#9).
+    ///
+    /// The tyre forces act on the body with the full h_cg arm; the links carry
+    ///   - lateral: the roll-centre (geometric) share, F = k_jack*Fy with
+    ///     k_jack = jacking_force_per_fy (K&C) or derived -sign(y)*h_rc/(t/2),
+    ///   - longitudinal: the anti share, F = -/+ Fx*anti*h_cg/L (front/rear).
+    /// Added to F_susp like a spring force, so the total load transfer stays
+    /// m*a*h_cg/(L or t) independent of RC height / anti% — they only move the
+    /// split between springs (elastic) and links (geometric).
+    double compute_link_force(int i, double fx_body, double fy_body,
+                              const std::array<double, 4>& susp_travel_from_eq,
+                              double axle_roll_angle) const {
+        const bool front = i < 2;
+        const auto& kc = params_.suspension.kc_corners[i];
+        const auto& axle = front ? params_.suspension.kc_front : params_.suspension.kc_rear;
+        double k_jack = (kc.valid && kc.kinematics.jacking_force_per_fy != 0.0)
+            ? kc.kinematics.jacking_force_per_fy
+            : 0.0;
+        if (k_jack == 0.0 && axle.roll_center_height != 0.0) {
+            // ponytail: linear RC migration, swap for RCz(heave, roll) LUT from the K&C sweep.
+            const double half_track = 0.5 * (front ? params_.mass.track_f : params_.mass.track_r);
+            const double h_rc = compute_roll_center_height_for_wheel(i, susp_travel_from_eq, axle_roll_angle);
+            k_jack = -std::copysign(1.0, wheel_positions_[i].y()) * h_rc / half_track;
+        }
+        const double anti = std::clamp(fx_body >= 0.0 ? axle.anti_drive_pct : axle.anti_brake_pct, 0.0, 1.0);
+        const double L = params_.mass.a + params_.mass.b;
+        const double f_anti = (front ? -1.0 : 1.0) * fx_body * anti * params_.mass.h_cg / L;
+        return k_jack * fy_body + f_anti;
     }
 
     /// @brief タイヤ座標系への完全な座標変換行列を計算
@@ -1451,7 +1469,8 @@ private:
         }
 
         for (int i = 0; i < 4; ++i) {
-            F_jacking[i] = compute_effective_jacking_force(i, tire_Fy_stage[i]);
+            F_jacking[i] = compute_link_force(i, Fx_wheel[i], Fy_wheel[i], susp_travel_from_eq_arr,
+                                              (i < 2) ? phi_front : phi_rear);
         }
         
         // ======== ARB力 ========
@@ -1472,9 +1491,9 @@ private:
             F_susp_each[i] = F_susp;
             Fz_total -= F_susp;
 
-            const double roll_center_height = compute_roll_center_height_for_wheel(i, susp_travel_from_eq_arr, (i < 2) ? phi_front : phi_rear);
-            roll_moment_arm[i] = std::max(0.0, h_cg - roll_center_height);
-            pitch_moment_arm[i] = compute_pitch_force_arm_for_wheel(i, Fx_wheel[i]);
+            // Full arms: RC height and anti% enter as link forces in F_susp (#9).
+            roll_moment_arm[i] = h_cg;
+            pitch_moment_arm[i] = h_cg;
         }
 
         const auto body_moments = compute_body_moment_contributions(
