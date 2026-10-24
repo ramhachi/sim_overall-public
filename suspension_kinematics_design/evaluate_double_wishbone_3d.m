@@ -44,6 +44,8 @@ travelResiduals = zeros(size(travelSamples));
 travelIterations = zeros(size(travelSamples));
 travelExitflags = zeros(size(travelSamples));
 travelGuess = [];
+travelWheelCenter = zeros(3, numel(travelSamples));
+travelContactPatch = zeros(3, numel(travelSamples));
 travelSampleValues = repmat(struct('z_offset_m', 0, 'camber_rad', 0, 'toe_rad', 0, ...
     'residual_norm', 0, 'iterations', 0, 'exitflag', 0, 'converged', false), 1, numel(travelSamples));
 for i = 1:numel(travelSamples)
@@ -59,6 +61,8 @@ for i = 1:numel(travelSamples)
     camberTravel(i) = compute_camber_from_pose(geom, pose) + staticCamberOffsetRad;
     toeTravel(i) = compute_toe_from_pose(geom, pose) + opts.StaticToe;
     travelKingpin(:, i) = pose.U_U - pose.L_U;
+    travelWheelCenter(:, i) = pose.W_C;
+    travelContactPatch(:, i) = compute_contact_patch(geom, pose);
     travelSampleValues(i).z_offset_m = travelSamples(i);
     travelSampleValues(i).camber_rad = camberTravel(i);
     travelSampleValues(i).toe_rad = toeTravel(i);
@@ -246,9 +250,22 @@ kcChecks = struct( ...
     'roll_center_range_m', [min(rollCenterHeights), max(rollCenterHeights)], ...
     'steer_angle_range_rad', max(steerActualAngles) - min(steerActualAngles));
 
+% Side-view swing-arm IC from the projected chassis pivot axes. Outboard
+% brakes react at the contact patch, inboard drive at the wheel centre.
 svic = compute_side_view_ic(geom);
-anti = compute_anti_metrics(svic, opts.CGHeight, opts.Wheelbase, geom.is_front, ...
-    opts.BrakeBiasFront, opts.DriveBiasRear);
+leverRatio = opts.Wheelbase / max(opts.CGHeight, 1e-6);
+antiBrakeTravel = zeros(size(travelSamples));
+antiDriveTravel = zeros(size(travelSamples));
+for i = 1:numel(travelSamples)
+    antiBrakeTravel(i) = side_view_tan_theta(svic, travelContactPatch(:, i), geom.is_front) * leverRatio;
+    antiDriveTravel(i) = side_view_tan_theta(svic, travelWheelCenter(:, i), geom.is_front) * leverRatio;
+end
+anti = compute_anti_metrics( ...
+    side_view_tan_theta(svic, staticMetrics.contact_patch, geom.is_front) * leverRatio, ...
+    side_view_tan_theta(svic, nominalPose.W_C, geom.is_front) * leverRatio, ...
+    geom.is_front, opts.BrakeBiasFront, opts.DriveBiasRear);
+antiBrakeCoeffs = polyfit(travelFromEq, antiBrakeTravel, min(2, numel(travelSamples) - 1));
+antiDriveCoeffs = polyfit(travelFromEq, antiDriveTravel, min(2, numel(travelSamples) - 1));
 compliance = estimate_compliance_proxy(geom, opts.ComplianceModel, opts.SteeringStiffness);
 
 metrics = struct();
@@ -290,7 +307,15 @@ metrics.anti_lift_pct = anti.lift;
 metrics.anti_rise_pct = anti.rise;
 metrics.anti_brake_pct = anti.brake;
 metrics.anti_drive_pct = anti.drive;
-metrics.anti_model = 'side_view_ic_with_assumed_bias';
+% anti_brake/anti_drive are per-axle force fractions (tan(theta)*L/h, no bias):
+% the runtime applies them to each wheel's own Fx. dive/rise/squat/lift are
+% the classical bias-weighted percentages for reporting.
+metrics.anti_brake_vs_travel = ensure_quadratic(antiBrakeCoeffs);
+metrics.anti_drive_vs_travel = ensure_quadratic(antiDriveCoeffs);
+metrics.anti_brake_curve = antiBrakeTravel;
+metrics.anti_drive_curve = antiDriveTravel;
+metrics.side_view_ic = svic;
+metrics.anti_model = 'side_view_pivot_axes_ic';
 metrics.anti_validated = false;
 metrics.jacking_model = 'roll_center_derived_proxy';
 metrics.jacking_validated = false;
@@ -665,42 +690,76 @@ ic = [ic(1), ic(2)];
 end
 
 function svic = compute_side_view_ic(geom)
-U_C = (geom.U_F + geom.U_R) / 2;
-L_C = (geom.L_F + geom.L_R) / 2;
-dirUp = [geom.U_U(1) - U_C(1), geom.U_U(3) - U_C(3)];
-dirLow = [geom.L_U(1) - L_C(1), geom.L_U(3) - L_C(3)];
-A = [dirUp(1), -dirLow(1); dirUp(2), -dirLow(2)];
-b = [geom.L_U(1) - geom.U_U(1); geom.L_U(3) - geom.U_U(3)];
-if abs(det(A)) < 1e-9
-    svic = [1e6, geom.W_C(3)];
+% Intersection of the upper and lower pivot axes projected on X-Z. Parallel
+% axes put the IC at infinity along their common direction (dir, X > 0).
+pu = [geom.U_F(1); geom.U_F(3)];
+du = [geom.U_R(1) - geom.U_F(1); geom.U_R(3) - geom.U_F(3)];
+pl = [geom.L_F(1); geom.L_F(3)];
+dl = [geom.L_R(1) - geom.L_F(1); geom.L_R(3) - geom.L_F(3)];
+A = [du, -dl];
+dir = du / max(norm(du), 1e-12);
+if dir(1) < 0
+    dir = -dir;
+end
+svic = struct('at_infinity', false, 'point_xz', [NaN, NaN], 'dir_xz', dir(:)');
+if abs(det(A)) < 1e-9 * max(norm(du) * norm(dl), 1e-12)
+    svic.at_infinity = true;
 else
-    sol = A \ b;
-    svic = [geom.U_U(1) + sol(1) * dirUp(1), geom.U_U(3) + sol(1) * dirUp(2)];
+    s = A \ (pl - pu);
+    svic.point_xz = (pu + s(1) * du)';
 end
 end
 
-function anti = compute_anti_metrics(svic, cgHeight, wheelbase, isFront, brakeBias, driveBias)
-if ~isfinite(svic(1)) || abs(svic(1)) < 1e-9
-    geometry = 0.0;
-else
-    slope = signed_divide(svic(2), svic(1));
-    geometry = abs(slope) * wheelbase / max(cgHeight, 1e-6);
+function t = side_view_tan_theta(svic, refPoint, isFront)
+% tan(theta) of the reaction line from refPoint to the side-view IC. Positive
+% means anti (front: IC behind and above; rear: IC ahead and above, Z down).
+if svic.at_infinity
+    t = svic.dir_xz(2) / max(svic.dir_xz(1), 1e-12);
+    if ~isFront
+        t = -t;
+    end
+    return;
 end
-clamp = @(x) max(0.0, min(1.0, x));
-dive = clamp(geometry * brakeBias);
-rise = clamp(geometry * (1.0 - brakeBias));
-lift = clamp(geometry * (1.0 - driveBias));
-squat = clamp(geometry * driveBias);
+dz = refPoint(3) - svic.point_xz(2);
 if isFront
-    brake = dive;
-    drive = lift;
+    t = signed_divide(dz, refPoint(1) - svic.point_xz(1));
 else
-    brake = rise;
-    drive = squat;
+    t = signed_divide(dz, svic.point_xz(1) - refPoint(1));
+end
+end
+
+function anti = compute_anti_metrics(brakeFraction, driveFraction, isFront, brakeBias, driveBias)
+if isFront
+    brake = brakeFraction;
+    drive = driveFraction;
+    dive = brakeFraction * brakeBias;
+    lift = driveFraction * (1.0 - driveBias);
+    rise = 0.0;
+    squat = 0.0;
+else
+    brake = brakeFraction;
+    drive = driveFraction;
+    rise = brakeFraction * (1.0 - brakeBias);
+    squat = driveFraction * driveBias;
+    dive = 0.0;
+    lift = 0.0;
 end
 anti = struct('dive', dive, 'squat', squat, 'lift', lift, 'rise', rise, ...
     'brake', brake, 'drive', drive, ...
     'brake_bias_front', brakeBias, 'drive_bias_rear', driveBias);
+end
+
+function cp = compute_contact_patch(geom, pose)
+% Ground contact point: wheel centre plus the loaded radius along the wheel
+% plane's downward direction (includes the R*sin(camber) lateral shift).
+spindle = pose.R_upright * get_spindle_nominal(geom);
+down = [0; 0; 1] - spindle(3) * spindle;
+down = down / max(norm(down), 1e-9);
+radius = geom.R_tire;
+if isfield(geom, 'R_loaded') && ~isempty(geom.R_loaded)
+    radius = geom.R_loaded;
+end
+cp = pose.W_C + radius * down;
 end
 
 function comp = estimate_compliance_proxy(geom, model, steeringStiffness)

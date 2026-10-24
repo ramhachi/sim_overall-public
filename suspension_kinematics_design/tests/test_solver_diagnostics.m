@@ -13,7 +13,7 @@ classdef test_solver_diagnostics < matlab.unittest.TestCase
             tc.verifyEqual(numel(metrics.solver_status.travel.residual_norms), ...
                 numel(metrics.travel_samples));
             tc.verifyTrue(metrics.solver_status.branch_continuous);
-            tc.verifyEqual(metrics.anti_model, 'side_view_ic_with_assumed_bias');
+            tc.verifyEqual(metrics.anti_model, 'side_view_pivot_axes_ic');
             tc.verifyEqual(metrics.jacking_model, 'roll_center_derived_proxy');
             tc.verifyEqual(metrics.compliance_model, 'arm_axial_stiffness_proxy');
             tc.verifyFalse(metrics.anti_validated);
@@ -53,7 +53,7 @@ classdef test_solver_diagnostics < matlab.unittest.TestCase
                 tc.verifyFalse(metrics.converged);
             else
                 tc.verifyTrue(metrics.solver_status.branch_continuous);
-            tc.verifyEqual(metrics.anti_model, 'side_view_ic_with_assumed_bias');
+            tc.verifyEqual(metrics.anti_model, 'side_view_pivot_axes_ic');
             tc.verifyEqual(metrics.jacking_model, 'roll_center_derived_proxy');
             tc.verifyEqual(metrics.compliance_model, 'arm_axial_stiffness_proxy');
             tc.verifyFalse(metrics.anti_validated);
