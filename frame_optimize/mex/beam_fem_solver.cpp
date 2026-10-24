@@ -7,9 +7,10 @@
  *
  * Inputs:
  *   nodes    - Nx3 double [x, y, z] in meters
- *   elements - Mx11 double [node_i, node_j, D_outer, t, E, G, rho, shape, jf, kAy, kAz]
- *              shape: 1=round, 2=square; kAy/kAz: shear areas [mm^2]
- *              Legacy Mx9 rows are accepted (Phi = 0, Euler-Bernoulli) with a warning.
+ *   elements - Mx13 double [node_i, node_j, D_outer, t, E, G, rho, shape, jf, kAy, kAz, off_i, off_j]
+ *              shape: 1=round, 2=square; kAy/kAz: shear areas [mm^2];
+ *              off_i/off_j: rigid end lengths [m]. Mx11 (no offsets) and legacy
+ *              Mx9 (Phi = 0, Euler-Bernoulli, with a warning) are accepted.
  *   bcs      - Bx3 double [node_id, dof, value], dof 1-6 (ux, uy, uz, rx, ry, rz)
  *   loads    - Lx3 double [node_id, dof, value], dof 1-6 (Fx, Fy, Fz, Mx, My, Mz)
  *   options  - struct (optional, currently unused)

@@ -9,7 +9,7 @@ function result = beam_fem_solver(nodes, elements, bcs, loads, options)
 %
 % Inputs:
 %   nodes    - Nx3 double [x, y, z] in meters
-%   elements - Mx11 double [node_i, node_j, D_outer, t, E, G, rho, shape, jf, kAy, kAz] (legacy Mx9: Phi = 0)
+%   elements - Mx13 double [node_i, node_j, D_outer, t, E, G, rho, shape, jf, kAy, kAz, off_i, off_j] (Mx11 / legacy Mx9 accepted)
 %   bcs      - Bx3 double [node_id, dof, value]
 %   loads    - Lx3 double [node_id, dof, value]
 %   options  - struct (currently unused)

@@ -91,7 +91,6 @@ function runtime_config = normalizeLegacyFrameConfig(config)
     runtime_config = withDefault(runtime_config, 'K_target', 1200);
     runtime_config = withDefault(runtime_config, 'gamma_below', 8.0);
     runtime_config = withDefault(runtime_config, 'gamma_hard', 50.0);
-    runtime_config = withDefault(runtime_config, 'joint_factor', 0.85);
     runtime_config = withDefault(runtime_config, 'max_cg_z', 0.380);
     runtime_config = withDefault(runtime_config, 'sparsity_max_total_length_m', 45.0);
     runtime_config = withDefault(runtime_config, 'sparsity_max_elements', 120);

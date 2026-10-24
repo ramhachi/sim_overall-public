@@ -131,12 +131,6 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
             elements_fem(i, 8) = 2;
         end
         
-        joint_factor = 1.0;
-        if isfield(config, 'joint_factor')
-            joint_factor = config.joint_factor;
-        end
-        elements_fem(i, 9) = joint_factor;
-        
         % Material restrictions check (F.3.2.1)
         group_name = elements_geom.group_names{group_idx};
         [is_mat_valid, ~] = checkMaterialRestriction(group_name, pipe, mat, reg_params);
@@ -159,6 +153,17 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
     
     % Timoshenko shear areas (cols 10-11, #46); the FEM uses Phi = 12EI/(G kA L^2).
     elements_fem = appendShearAreas(elements_fem);
+
+    % Joint model (#48): per-element CIDECT jf + rigid end offsets (cols 12-13).
+    % config.joint_factor (scalar) overrides jf for welded members; bonded CFRP gets none.
+    bonded = cellfun(@(id) ~isempty(id) && isfield(materials.(id), 'is_composite') ...
+        && materials.(id).is_composite, element_materials);
+    [joint_jf, joint_offsets] = compute_joint_corrections(nodes, elements_fem, bonded);
+    if ~isempty(getConfigField(config, 'joint_factor', []))
+        joint_jf(~bonded) = config.joint_factor;
+    end
+    elements_fem(:, 9) = joint_jf;
+    elements_fem(:, 12:13) = joint_offsets;
 
     % Calculate CG Height for newly assigned frame
     % Also calculate mass components here fully, as elements_fem is completely populated now.

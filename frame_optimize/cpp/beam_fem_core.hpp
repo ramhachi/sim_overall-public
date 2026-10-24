@@ -5,9 +5,11 @@
 // Units: nodes [m], D/t [mm], E/G [GPa], rho [kg/m^3], kA [mm^2], forces [N, N*m].
 //
 // Element row (node ids 1-indexed):
-//   [ni nj D t E G rho shape jf kAy kAz]
-//   kAy/kAz = shear areas for bending in the local x-y / x-z planes. Legacy
-//   9-column rows (no kA) are accepted with Phi = 0 (Euler-Bernoulli) and a warning.
+//   [ni nj D t E G rho shape jf kAy kAz off_i off_j]
+//   kAy/kAz = shear areas [mm^2] for bending in the local x-y / x-z planes.
+//   off_i/off_j = rigid end lengths [m] along the member axis (joint inside the
+//   chord tube); the flexible length is Lf = L - off_i - off_j.
+//   Accepted widths: 13, 11 (no offsets) and legacy 9 (Phi = 0 + warning).
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -31,8 +33,9 @@ struct BeamElement {
     int shape = 1;  // 1 = round, 2 = square
     double jf = 1.0;
     double kAy = 0.0, kAz = 0.0;
+    double off_i = 0.0, off_j = 0.0;
     double A = 0.0, Iy = 0.0, Iz = 0.0, J = 0.0;
-    double L = 0.0;
+    double L = 0.0, Lf = 0.0;  // node-to-node and flexible length [m]
     Eigen::Matrix3d R = Eigen::Matrix3d::Identity();  // columns = local axes in global
 };
 
@@ -131,10 +134,27 @@ inline Mat12 compute_local_stiffness(const BeamElement& e, double L) {
     return K;
 }
 
-// row: element row (see header), ncols: 9 or 11.
+// Rigid end offsets: flexible-end displacement = u_node + theta x (offset along x_local).
+// Kept local: u_flex = H * u_local.
+inline Mat12 compute_offset_matrix(const BeamElement& e) {
+    Mat12 H = Mat12::Identity();
+    H(1, 5) = e.off_i;    // v_i'  = v_i + a theta_z
+    H(2, 4) = -e.off_i;   // w_i'  = w_i - a theta_y
+    H(7, 11) = -e.off_j;  // v_j'  = v_j - b theta_z
+    H(8, 10) = e.off_j;   // w_j'  = w_j + b theta_y
+    return H;
+}
+
+// 12x12 element stiffness in global coordinates at the element's nodes.
+inline Mat12 compute_global_stiffness(const BeamElement& e) {
+    const Mat12 HT = compute_offset_matrix(e) * compute_transformation(e.R);
+    return HT.transpose() * compute_local_stiffness(e, e.Lf) * HT;
+}
+
+// row: element row (see header), ncols: 9, 11 or 13.
 inline BeamElement parse_element_row(const double* row, int ncols, const Eigen::MatrixXd& nodes) {
-    if (ncols != 9 && ncols != 11) {
-        throw std::runtime_error("Element rows must have 9 or 11 columns");
+    if (ncols != 9 && ncols != 11 && ncols != 13) {
+        throw std::runtime_error("Element rows must have 9, 11 or 13 columns");
     }
     BeamElement e;
     e.node_i = static_cast<int>(row[0]) - 1;
@@ -155,6 +175,10 @@ inline BeamElement parse_element_row(const double* row, int ncols, const Eigen::
         e.kAy = row[9];
         e.kAz = row[10];
     }
+    if (ncols >= 13) {
+        e.off_i = row[11];
+        e.off_j = row[12];
+    }
     compute_section_properties(e);
     const Eigen::Vector3d p1 = nodes.row(e.node_i).transpose();
     const Eigen::Vector3d p2 = nodes.row(e.node_j).transpose();
@@ -163,6 +187,10 @@ inline BeamElement parse_element_row(const double* row, int ncols, const Eigen::
         throw std::runtime_error("Zero-length element");
     }
     e.R = compute_rotation_matrix(p1, p2);
+    e.Lf = e.L - e.off_i - e.off_j;
+    if (e.off_i < 0.0 || e.off_j < 0.0 || e.Lf <= 0.05 * e.L) {
+        throw std::runtime_error("Rigid end offsets must be >= 0 and leave > 5% flexible length");
+    }
     return e;
 }
 
@@ -178,8 +206,7 @@ inline FemResult solve_frame(const FemInput& in) {
     for (const auto& e : in.elements) {
         if (e.kAy <= 0.0 || e.kAz <= 0.0) ++n_eb;
         res.mass += e.rho * e.A * 1e-6 * e.L;
-        const Mat12 T = compute_transformation(e.R);
-        const Mat12 Kg = T.transpose() * compute_local_stiffness(e, e.L) * T;
+        const Mat12 Kg = compute_global_stiffness(e);
         const int base[2] = {6 * e.node_i, 6 * e.node_j};
         for (int a = 0; a < 2; ++a)
             for (int b = 0; b < 2; ++b)

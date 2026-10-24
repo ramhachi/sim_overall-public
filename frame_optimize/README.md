@@ -284,6 +284,28 @@ frame_optimize/
 
 ---
 
+## FEM physics model (2026-10, Epic #1)
+
+Kernel: `cpp/beam_fem_core.hpp`, shared by `beam_fem_standalone`, `beam_fem_server` and the MEX.
+Closed-form checks: `beam_fem_standalone --selftest` (CTest `beam_fem_closed_form`) and
+`tests/test_beam_fem_closed_form.m`.
+
+* **Element row** `[ni nj D t E G rho shape jf kAy kAz off_i off_j]` (D, t, kA in mm/mm², offsets in m).
+  11-column rows have no offsets; legacy 9-column rows run Euler–Bernoulli (Φ = 0) with a warning.
+* **Section (#47)**: round J = πD⁴/32·(1−(Di/D)⁴), kA = A/2 (Cowper); square J = b³t (Bredt, b = D − t,
+  sharp corners because the catalog lists no corner radius), kA = 2bt (web area).
+* **Timoshenko (#46)**: Φ = 12EI/(G·kA·L²) form, same DOFs.
+* **Joint model (#48)**: `compute_joint_corrections.m` gives each member a CIDECT-style factor
+  `jf = clip(1 − 0.15(γ/10)(1−√β)/sinθ, 0.5, 1)` (mean of both ends, chord = largest OD at the node,
+  members within 30° of the chord are continuous) and rigid end offsets r_chord/sinθ (flexible length
+  L − off_i − off_j). Bonded CFRP members get no weld factor. `config.joint_factor` (scalar) overrides jf.
+  Note: for equal-OD joints (β = 1) the ported formula gives jf = 1; calibrate with the override
+  (docs.md suggests 0.55–0.70) until stage 2 exists.
+  *Stage 2 (follow-up, not implemented)*: per-joint-topology 6×6 condensed stiffness from offline shell
+  sub-models, inserted as joint springs at beam nodes (≈3× DOF).
+
+---
+
 ## 参考文献
 
 * **FSAE Rules**: Formula SAE 2026 V1.0 (T.1.1, F.2, F.3)

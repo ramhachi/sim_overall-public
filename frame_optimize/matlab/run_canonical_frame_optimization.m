@@ -397,7 +397,7 @@ function [config, reg_params] = buildCanonicalConfig(runtime, opts, displayProgr
     elseif displayProgress
         fprintf('   → 目標重量ペナルティ: OFF\n');
     end
-    config.joint_factor = 0.85;
+    % Joint stiffness: per-element CIDECT jf + rigid end offsets (#48); set config.joint_factor to override jf.
     if logical(opts.UseFrameDesignV2)
         config.max_cg_z = 0.550;
         config.sparsity_penalty_scale = 200.0;

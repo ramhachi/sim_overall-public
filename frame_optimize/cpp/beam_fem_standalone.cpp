@@ -114,6 +114,20 @@ int run_selftest() {
               Tq * L / (Gp * b * b * b * t * 1e-12), 1e-9);
     }
 
+    {   // 5. rigid end offsets a (clamp side) and b (tip side), Lf = L - a - b, tip load P:
+        //    flexible end sees P and M = P b; tip = delta_f + b theta_f
+        const double L = 0.3, a = 0.02, b = 0.03, Lf = L - a - b;
+        std::vector<double> sec_off = round;
+        sec_off.push_back(a);
+        sec_off.push_back(b);
+        json in = cantilever({0, 1, 0}, L, 1, sec_off);
+        in["loads"].push_back({2, 3, P});
+        const double EI = Ep * I;
+        const double df = P * Lf * Lf * Lf / (3 * EI) + P * b * Lf * Lf / (2 * EI) + P * Lf / (Gp * kA);
+        const double tf = P * Lf * Lf / (2 * EI) + P * b * Lf / EI;
+        check("rigid end offsets cantilever tip", fo::solve_json(in)["U"][1][2].get<double>(), df + b * tf, 1e-6);
+    }
+
     std::cout << (g_failures ? "SELFTEST FAILED" : "SELFTEST PASSED") << " (" << g_failures << " failures)\n";
     return g_failures;
 }
