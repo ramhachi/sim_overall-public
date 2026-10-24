@@ -119,8 +119,14 @@ else
     optimizerName = 'MultiStart/fmincon/sqp';
     geom_l = build_wishbone_geom(x_opt, axle, static_camber_deg, true, isFront, ds);
 end
+if ~isFront && ~isfield(geom_l, 'tie_rod_chassis')
+    geom_l = add_zero_bump_steer_toe_link(geom_l, ds);
+end
 if fixedBoth
     geom_r = geom_from_hardpoints(hpIn.(names{2}), false, isFront, static_camber(2), R_tire, axle.R_loaded);
+    if ~isFront && ~isfield(geom_r, 'tie_rod_chassis')
+        geom_r = add_zero_bump_steer_toe_link(geom_r, ds);
+    end
     symmetry = struct('mode', 'per_corner_input', 'left_right_hardpoints', 'independent', ...
         'asymmetric_static_alignment_supported', true, ...
         'description', 'Both corners supplied in design_space.hardpoints_input; no mirroring.');
@@ -300,6 +306,32 @@ geom.kingpin_axis.origin = L_U;
 geom.kingpin_axis.direction = (U_U - L_U) / norm(U_U - L_U);
 end
 
+function geom = add_zero_bump_steer_toe_link(geom, ds)
+% Rear toe link (#42). Outer point at a fixed offset from the lower ball
+% joint; inner point from the classic front-view construction: on the line
+% from the front-view IC through the outer point, where it crosses the line
+% through the inboard pivots (zero first-order bump steer). Same X (link
+% parallel to Y in plan view at static).
+outer = geom.L_U + [ds.toe_link_outer_dx_m; 0; ds.toe_link_outer_dz_m];
+uc = (geom.U_F + geom.U_R) / 2;
+lc = (geom.L_F + geom.L_R) / 2;
+yz = @(p) p(2:3);
+dUp = yz(geom.U_U) - yz(uc);
+dLow = yz(geom.L_U) - yz(lc);
+A = [dUp, -dLow];
+if abs(det(A)) < 1e-9
+    dirIc = dUp;                                    % IC at infinity
+else
+    s = A \ (yz(lc) - yz(uc));
+    dirIc = yz(outer) - (yz(uc) + s(1) * dUp);
+end
+dPiv = yz(lc) - yz(uc);
+t = [dirIc, -dPiv] \ (yz(uc) - yz(outer));
+inner = [outer(1); yz(outer) + t(1) * dirIc];
+geom.tie_rod_chassis = inner;
+geom.tie_rod_upright = outer;
+end
+
 function metrics = evaluate_metrics(geom, params, wheelIdx, isFront, samples)
 if isFront
     track = params.mass.track_f;
@@ -311,6 +343,10 @@ end
 args = {};
 if nargin >= 5 && ~isempty(samples)
     args = namedargs2cell(samples);
+end
+if ~isFront
+    % Rear toe link is chassis-fixed: no rack/steer sweep.
+    args = [args, {'RackSamples', [], 'SteerSamples', 0.0}];
 end
 metrics = evaluate_double_wishbone_3d(geom, ...
     'TrackWidth', track, ...

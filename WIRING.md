@@ -136,3 +136,17 @@ C++ changes:
 3. Production mode: `compliance.provisional==true` is expected until rig data
    exist; treat it as "apply but log once", not fail-fast (it is labelled per
    field, see #39, and is not part of `quality.verdict`).
+
+## #42 rear toe link, front closed-link refresh
+
+- Rear corners now carry `hardpoints.tie_rod_inner/outer` (= toe link),
+  `kinematics.toe_vs_travel`, `kinematics.roll_steer_gain` and
+  `sample_values.toe_rad`, with `evaluation_scope.tie_rod/toe/roll_steer =
+  "evaluated"`, `steering = "not_applicable"`. The loader already parses these
+  keys; the runtime toe path (`compute_toe_angle`) must not skip rear wheels.
+- Front corners are rewritten as a whole by the steering stage
+  (`source.script = matlab/steering_hardpoint_design/main_steering_optimizer.m`,
+  `source.model = a_arm_plus_tie_rod_closed_link`): camber, roll gain, jacking,
+  anti, compliance and samples are all tie-rod-constrained. A front corner with
+  `source.model = a_arm_only_two_dof` is the pre-steering stage output and must
+  not be used for toe (see #39 rule).
