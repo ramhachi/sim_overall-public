@@ -157,6 +157,9 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
         % end
     end
     
+    % Timoshenko shear areas (cols 10-11, #46); the FEM uses Phi = 12EI/(G kA L^2).
+    elements_fem = appendShearAreas(elements_fem);
+
     % Calculate CG Height for newly assigned frame
     % Also calculate mass components here fully, as elements_fem is completely populated now.
     for i = 1:num_elements
@@ -408,6 +411,7 @@ function [obj_val, results] = frameObjectiveFunction(x, ~, ~, ~, config, catalog
     results.provisional = provisional;
     results.provisional_reasons = provisional_reasons;
     results.nodes = nodes; % Pass back generated nodes
+    results.elements = elements_fem; % FEM element rows actually solved
     results.cg_z = current_cg_z; % Pass back CG metadata
 end
 
@@ -531,6 +535,14 @@ function available = ensureNativeMexOnPath()
     end
     solver_path = which('beam_fem_solver');
     available = ~isempty(solver_path) && contains(solver_path, ['.' mexext]);
+end
+
+function elements_fem = appendShearAreas(elements_fem)
+    shapes = {'round', 'square'};
+    for i = 1:size(elements_fem, 1)
+        props = computeTubeSectionProperties(elements_fem(i, 3), elements_fem(i, 4), shapes{elements_fem(i, 8)});
+        elements_fem(i, 10:11) = [props.Asy_mm2, props.Asz_mm2];
+    end
 end
 
 function area = tubeAreaM2(D_outer_m, t_m, shape_code)

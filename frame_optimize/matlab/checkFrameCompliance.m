@@ -7,7 +7,7 @@ function [pass, penalties, report] = checkFrameCompliance(frame_struct, catalog,
 % Inputs:
 %   frame_struct - Struct with fields:
 %                  nodes: Nx3 [x, y, z]
-%                  elements: Mx9 [node_i, node_j, D_outer, t, E, G, rho, shape, joint_factor]
+%                  elements: MxK [node_i, node_j, D_outer, t, E, G, rho, shape, jf, ...]
 %                  element_groups: Struct mapping group name -> element indices
 %                  element_materials: Optional cell array of material IDs per element
 %   catalog      - Pipe catalog from loadPipeCatalog()

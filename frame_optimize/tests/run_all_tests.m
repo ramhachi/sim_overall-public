@@ -16,6 +16,7 @@ function run_all_tests()
         'test_generate_onshape_3d_sketch'
         'test_resolve_suspension_geometry_source'
         'test_frame_design_v2'
+        'test_beam_fem_closed_form'
         };
 
     failures = {};
