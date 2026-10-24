@@ -15,7 +15,7 @@ classdef test_solver_diagnostics < matlab.unittest.TestCase
             tc.verifyTrue(metrics.solver_status.branch_continuous);
             tc.verifyEqual(metrics.anti_model, 'side_view_pivot_axes_ic');
             tc.verifyEqual(metrics.jacking_model, 'roll_center_derived_proxy');
-            tc.verifyEqual(metrics.compliance_model, 'arm_axial_stiffness_proxy');
+            tc.verifyEqual(metrics.compliance_model, 'truss_level1');
             tc.verifyFalse(metrics.anti_validated);
             tc.verifyGreaterThanOrEqual(metrics.anti_dive_pct, 0.0);
             tc.verifyLessThanOrEqual(metrics.anti_dive_pct, 1.0);
@@ -55,7 +55,7 @@ classdef test_solver_diagnostics < matlab.unittest.TestCase
                 tc.verifyTrue(metrics.solver_status.branch_continuous);
             tc.verifyEqual(metrics.anti_model, 'side_view_pivot_axes_ic');
             tc.verifyEqual(metrics.jacking_model, 'roll_center_derived_proxy');
-            tc.verifyEqual(metrics.compliance_model, 'arm_axial_stiffness_proxy');
+            tc.verifyEqual(metrics.compliance_model, 'truss_level1');
             tc.verifyFalse(metrics.anti_validated);
             tc.verifyGreaterThanOrEqual(metrics.anti_dive_pct, 0.0);
             tc.verifyLessThanOrEqual(metrics.anti_dive_pct, 1.0);

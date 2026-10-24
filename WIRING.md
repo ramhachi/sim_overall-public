@@ -104,3 +104,35 @@ Export is refused in MATLAB when `fit_ok=false` unless
 C++ verdict rule). `hardpoints.contact_patch` now uses the loaded radius
 `R - Fz_static/k_tire` and the camber lateral shift; the wheel centre Z is at
 `-R_loaded` (ground at Z=0).
+
+## #41 compliance (Level-1 truss)
+
+`kc.corners.X.compliance` keeps the existing 6-vectors (runtime unchanged in
+shape) but every row is now populated:
+
+```json
+"compliance": {
+  "toe_per_load": [6], "camber_per_load": [6], "caster_per_load": [6],
+  "track_per_load": [6], "wheelbase_per_load": [6],   // columns Fx,Fy,Fz,Mx,My,Mz
+  "model": "truss_level1" | "arm_axial_stiffness_proxy",
+  "provisional": true, "scope": "model_default_stiffness" | "model_supplied_stiffness" | "proxy_not_validated",
+  "basis": "forces at contact patch, moments as couples; SAE J670e",
+  "stiffness": {...}, "assumptions": [...]
+}
+```
+
+Sign conventions: toe = wheel yaw (nose right +, the same quantity the runtime
+adds to `total_yaw`), camber = asin(spindle_z) (top outboard +), track = contact
+patch outboard +, wheelbase = contact patch away from the other axle +.
+
+C++ changes:
+1. Loads vector passed to `compute_camber_angle/compute_toe_angle`
+   (`vehicle_14dof_new.hpp:1246`) must be the wheel's contact-patch forces in
+   the body (SAE) frame `{Fx, Fy, Fz, Mx, My, Mz}`; today only `Fz` is filled.
+   Fill `Fx, Fy` (tire forces rotated by steer) and `Mz` (aligning moment); `Mx,
+   My` may stay 0 (columns small).
+2. Optionally consume `caster/track/wheelbase_per_load` (contact-patch shift
+   changes scrub/trail and track width).
+3. Production mode: `compliance.provisional==true` is expected until rig data
+   exist; treat it as "apply but log once", not fail-fast (it is labelled per
+   field, see #39, and is not part of `quality.verdict`).

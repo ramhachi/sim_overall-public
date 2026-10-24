@@ -271,7 +271,12 @@ anti = compute_anti_metrics( ...
     geom.is_front, opts.BrakeBiasFront, opts.DriveBiasRear);
 antiBrakeCoeffs = polyfit(travelFromEq, antiBrakeTravel, min(2, numel(travelSamples) - 1));
 antiDriveCoeffs = polyfit(travelFromEq, antiDriveTravel, min(2, numel(travelSamples) - 1));
-compliance = estimate_compliance_proxy(geom, opts.ComplianceModel, opts.SteeringStiffness);
+if isfield(opts.ComplianceModel, 'model') && strcmp(opts.ComplianceModel.model, 'proxy_axial')
+    compliance = estimate_compliance_proxy(geom, opts.ComplianceModel, opts.SteeringStiffness);
+else
+    compliance = compute_compliance_truss(geom, staticMetrics.contact_patch, ...
+        opts.ComplianceModel, opts.SteeringStiffness, opts.UseTieRod && isfield(geom, 'tie_rod_chassis'));
+end
 
 metrics = struct();
 metrics.camber_deg = staticMetrics.camber_deg;
@@ -338,7 +343,7 @@ metrics.anti_validated = false;
 metrics.jacking_model = 'roll_center_derived_proxy';
 metrics.jacking_validated = false;
 metrics.compliance = compliance;
-metrics.compliance_model = 'arm_axial_stiffness_proxy';
+metrics.compliance_model = compliance.model;
 metrics.compliance_validated = false;
 metrics.sample_values = struct( ...
     'travel', travelSampleValues, ...
@@ -844,6 +849,140 @@ comp.toe_per_load(1) = deltaFx / verticalSep;
 if geom.is_front
     comp.toe_per_load(6) = 1.0 / max(steeringStiffness, 1e-6);
 end
+end
+
+function comp = compute_compliance_truss(geom, contactPatch, model, steeringStiffness, hasTieRod)
+% Level-1 linear compliance (#41): rigid upright (6 DOF at the wheel centre)
+% on two free ball-joint nodes. Each A-arm leg, the tie rod / toe link and the
+% pushrod are axial members (tube EA/L in series with their rod ends); ball
+% joints are isotropic springs. Solved with backslash for unit wrenches.
+% Default stiffnesses are order-of-magnitude values, not measurements:
+%   tube: steel E = 200 GPa, 19.05 x 1.6 mm (previous proxy values);
+%   rod end (spherical rod end, radial/axial): 3e7 N/m and ball joint
+%   (pressed spherical bearing): 1e8 N/m, typical of published FSAE
+%   K&C compliance studies (1e7..1e8 N/m). Replace with rig data.
+% ponytail: chassis mounts, upright and arm bending are rigid; add shell/beam
+%   FE or K&C rig matrices when available.
+defaults = struct('youngs_modulus', 2.0e11, 'outer_diameter_m', 0.01905, ...
+    'wall_thickness_m', 0.0016, 'rod_end_stiffness_n_per_m', 3.0e7, ...
+    'ball_joint_stiffness_n_per_m', 1.0e8, 'ride_restraint_n_per_m', 1.0e9, ...
+    'stiffness_source', 'default_order_of_magnitude');
+for f = fieldnames(defaults)'
+    if ~isfield(model, f{1})
+        model.(f{1}) = defaults.(f{1});
+    end
+end
+Do = model.outer_diameter_m;
+Di = max(Do - 2 * model.wall_thickness_m, 0.0);
+EA = model.youngs_modulus * pi / 4 * (Do^2 - Di^2);
+kRe = model.rod_end_stiffness_n_per_m;
+series = @(varargin) 1 / sum(1 ./ [varargin{:}]);
+member = @(a, b, nEnds) series(EA / max(norm(b - a), 1e-6), kRe / nEnds);
+
+WC = geom.W_C;
+nDof = 12;                       % node U (1:3), node L (4:6), upright [u; theta] (7:12)
+K = zeros(nDof);
+fixedT = zeros(3, nDof);
+nodeT = @(j) [zeros(3, 3 * (j - 1)), eye(3), zeros(3, nDof - 3 * j)];
+uprightT = @(r) [zeros(3, 6), eye(3), -skew3(r - WC)];
+    function addSpring(Ta, Tb, a, b, k)
+        n = (b - a) / max(norm(b - a), 1e-12);
+        g = n' * (Tb - Ta);
+        K = K + k * (g' * g);
+    end
+% A-arm legs: chassis rod end (1 end) + tube; outer end is the ball joint.
+addSpring(fixedT, nodeT(1), geom.U_F, geom.U_U, member(geom.U_F, geom.U_U, 1));
+addSpring(fixedT, nodeT(1), geom.U_R, geom.U_U, member(geom.U_R, geom.U_U, 1));
+addSpring(fixedT, nodeT(2), geom.L_F, geom.L_U, member(geom.L_F, geom.L_U, 1));
+addSpring(fixedT, nodeT(2), geom.L_R, geom.L_U, member(geom.L_R, geom.L_U, 1));
+kBj = model.ball_joint_stiffness_n_per_m;
+for e = eye(3)
+    addSpring(nodeT(1), uprightT(geom.U_U), geom.U_U, geom.U_U + e, kBj);
+    addSpring(nodeT(2), uprightT(geom.L_U), geom.L_U, geom.L_U + e, kBj);
+end
+kpDir = (geom.U_U - geom.L_U) / norm(geom.U_U - geom.L_U);
+assumptions = {'upright_rigid', 'chassis_mounts_rigid', 'arms_axial_only'};
+if hasTieRod
+    a = geom.tie_rod_chassis;
+    b = geom.tie_rod_upright;
+    kLink = member(a, b, 2);
+    if geom.is_front
+        % Steering system (column/rack) in series, mapped to the tie-rod axis
+        % through the tie-rod moment arm about the kingpin.
+        n = (b - a) / norm(b - a);
+        arm = abs(dot(cross(b - geom.L_U, n), kpDir));
+        kLink = series(kLink, steeringStiffness / max(arm^2, 1e-6));
+        assumptions{end + 1} = 'steering_stiffness_in_series_with_tie_rod';
+    end
+    addSpring(fixedT, uprightT(b), a, b, kLink);
+else
+    g = [zeros(1, 9), kpDir'];
+    K = K + steeringStiffness * (g' * g);
+    assumptions{end + 1} = 'toe_dof_restrained_by_steering_stiffness_param';
+end
+if isfield(geom, 'pushrod_chassis') && isfield(geom, 'pushrod_upright')
+    addSpring(fixedT, uprightT(geom.pushrod_upright), geom.pushrod_chassis, ...
+        geom.pushrod_upright, member(geom.pushrod_chassis, geom.pushrod_upright, 2));
+    assumptions{end + 1} = 'pushrod_on_upright_rocker_locked';
+else
+    addSpring(fixedT, uprightT(WC), WC, WC + [0; 0; 1], model.ride_restraint_n_per_m);
+    assumptions{end + 1} = 'no_pushrod_hardpoints_ride_height_held_by_rig_restraint';
+end
+
+% Unit wrenches: forces at the contact patch, moments as pure couples.
+F = zeros(nDof, 6);
+r = contactPatch - WC;
+for i = 1:3
+    e = zeros(3, 1);
+    e(i) = 1;
+    F(7:12, i) = [e; cross(r, e)];
+    F(10:12, 3 + i) = e;
+end
+Q = K \ F;
+
+sideSign = 1 - 2 * geom.is_left;
+fwdSign = 1 - 2 * ~geom.is_front;
+nominal = struct('R_upright', eye(3));
+toe0 = compute_toe_from_pose(geom, nominal);
+camber0 = compute_camber_from_pose(geom, nominal);
+caster = @(R) atan2(-(R(1, :) * kpDir), -(R(3, :) * kpDir));
+caster0 = caster(eye(3));
+comp = struct();
+comp.toe_per_load = zeros(1, 6);
+comp.camber_per_load = zeros(1, 6);
+comp.caster_per_load = zeros(1, 6);
+comp.track_per_load = zeros(1, 6);
+comp.wheelbase_per_load = zeros(1, 6);
+for i = 1:6
+    theta = Q(10:12, i);
+    s = 1e-6 / max(norm(theta), eps);
+    R = axis_angle_rotation_local(theta, s * norm(theta));
+    pose = struct('R_upright', R);
+    comp.toe_per_load(i) = (compute_toe_from_pose(geom, pose) - toe0) / s;
+    comp.camber_per_load(i) = (compute_camber_from_pose(geom, pose) - camber0) / s;
+    comp.caster_per_load(i) = (caster(R) - caster0) / s;
+    dCp = Q(7:9, i) + cross(theta, r);
+    comp.track_per_load(i) = sideSign * dCp(2);
+    comp.wheelbase_per_load(i) = fwdSign * dCp(1);
+end
+comp.model = 'truss_level1';
+comp.validated = false;
+comp.provisional = strcmp(model.stiffness_source, 'default_order_of_magnitude');
+if comp.provisional
+    comp.scope = 'model_default_stiffness';
+else
+    comp.scope = 'model_supplied_stiffness';
+end
+comp.stiffness = rmfield(model, intersect(fieldnames(model), {'model'}));
+comp.assumptions = assumptions;
+comp.units = 'toe/camber/caster: rad per N (Fx,Fy,Fz) or per N*m (Mx,My,Mz); track/wheelbase: m per unit';
+comp.basis = 'forces at contact patch, moments as couples; SAE J670e';
+comp.sign_convention = ['columns Fx,Fy,Fz,Mx,My,Mz in SAE axes; toe = wheel yaw (nose right +, runtime total_yaw); camber top-outboard +; ', ...
+    'track = contact-patch outboard motion; wheelbase = contact-patch motion away from the other axle'];
+end
+
+function S = skew3(v)
+S = [0, -v(3), v(2); v(3), 0, -v(1); -v(2), v(1), 0];
 end
 
 function camber = compute_camber_from_pose(geom, pose)
