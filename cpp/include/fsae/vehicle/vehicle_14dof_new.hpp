@@ -1442,8 +1442,17 @@ private:
 
             // Bouc-Wenダンパー力（変位にPOU反映、速度はquasi-static近似で変更なし）
             auto bw_out = compute_bouc_wen(bw_params_[i], mr_d * x_eff, mr_d * susp_velocity, state.damper_z[i]);
-            F_bw[i] = mr_d * bw_out.force;
-            dz_bw[i] = bw_out.dz_dt;
+            const auto& damper_v = params_.suspension.damper_lut_velocity;
+            const auto& damper_f = params_.suspension.damper_lut_force[i];
+            if (damper_v.size() >= 2 && damper_f.size() == damper_v.size()) {
+                // Measured dyno LUT at the element, 4-wheel independent (#11).
+                F_bw[i] = mr_d * interp1_clamped(damper_v, damper_f, mr_d * susp_velocity,
+                                                 bw_out.force);
+                dz_bw[i] = 0.0;
+            } else {
+                F_bw[i] = mr_d * bw_out.force;
+                dz_bw[i] = bw_out.dz_dt;
+            }
             if (update_cache) {
                 bw_forces_[i] = F_bw[i];
             }

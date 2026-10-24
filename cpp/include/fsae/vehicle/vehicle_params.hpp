@@ -87,6 +87,12 @@ struct SuspensionParams {
     double bw_beta = 300.0;     // 形状パラメータ (典型値: 300)
     double bw_gamma = 0.0;      // 形状パラメータ (典型値: 0)
     double bw_n = 1.0;          // 形状指数 (典型値: 1)
+
+    // Optional measured damper dyno LUT (#11). Velocity is at the damper
+    // element [m/s, + compression], force is element force [N, + upward on
+    // body]; one table per corner. Empty = use the Bouc-Wen model above.
+    std::vector<double> damper_lut_velocity;
+    std::array<std::vector<double>, 4> damper_lut_force;
     
     // LuGre摩擦モデル（設計書セクション5.4準拠）
     // ⚠️ 安定性制約（ガイド §7.5, §12.6）:
@@ -460,6 +466,26 @@ struct VehicleParams {
             if (s.contains("bw_beta")) p.suspension.bw_beta = s["bw_beta"];
             if (s.contains("bw_gamma")) p.suspension.bw_gamma = s["bw_gamma"];
             if (s.contains("bw_n")) p.suspension.bw_n = s["bw_n"];
+            if (s.contains("damper_lut")) {
+                auto& dl = s["damper_lut"];
+                if (dl.contains("velocity_mps") && dl["velocity_mps"].is_array()) {
+                    p.suspension.damper_lut_velocity.clear();
+                    for (const auto& v : dl["velocity_mps"]) {
+                        p.suspension.damper_lut_velocity.push_back(v.get<double>());
+                    }
+                }
+                if (dl.contains("force_N") && dl["force_N"].is_object()) {
+                    const std::array<std::string, 4> keys = {"FL", "FR", "RL", "RR"};
+                    for (int i = 0; i < 4; ++i) {
+                        if (!dl["force_N"].contains(keys[i])) continue;
+                        auto& dst = p.suspension.damper_lut_force[i];
+                        dst.clear();
+                        for (const auto& f : dl["force_N"][keys[i]]) {
+                            dst.push_back(f.get<double>());
+                        }
+                    }
+                }
+            }
             if (s.contains("lugre_sigma0")) p.suspension.lugre_sigma0 = s["lugre_sigma0"];
             if (s.contains("lugre_sigma1")) p.suspension.lugre_sigma1 = s["lugre_sigma1"];
             if (s.contains("lugre_sigma2")) p.suspension.lugre_sigma2 = s["lugre_sigma2"];

@@ -365,6 +365,33 @@ TEST(CoreA_Tire, CamberedVerticalLoadProjectsToBodyPlane) {
     EXPECT_GT(std::abs(fy_tilted - fy_flat), 10.0);
 }
 
+// #11: per-corner damper dyno LUT replaces the Bouc-Wen force and parses from JSON.
+TEST(CoreA_Damper, DynoLutIsPerCornerAndParsed) {
+    VehicleParams p = VehicleParams::default_fsae();
+    p.suspension.damper_lut_velocity = {-0.5, 0.0, 0.5};
+    p.suspension.damper_lut_force[0] = {50.0, 100.0, 150.0};
+    p.suspension.damper_lut_force[1] = {40.0, 80.0, 120.0};
+    p.suspension.damper_lut_force[2] = {30.0, 60.0, 90.0};
+    p.suspension.damper_lut_force[3] = {20.0, 40.0, 60.0};
+    Vehicle14DOF_New veh(p);
+    veh.step(1e-4, DriverInput{});
+    const double mr = p.suspension.motion_ratio[0];
+    EXPECT_NEAR(veh.get_bw_forces()[0], mr * 100.0, 0.1 * mr * 100.0);
+    EXPECT_NEAR(veh.get_bw_forces()[1], p.suspension.motion_ratio[1] * 80.0,
+                0.1 * p.suspension.motion_ratio[1] * 80.0);
+
+    const auto parsed = VehicleParams::from_json_string(R"({
+        "suspension": {"damper_lut": {
+            "velocity_mps": [-0.5, 0.0, 0.5],
+            "force_N": {"FL": [1, 2, 3], "RR": [4, 5, 6]}
+        }}
+    })");
+    EXPECT_EQ(parsed.suspension.damper_lut_velocity.size(), 3u);
+    EXPECT_EQ(parsed.suspension.damper_lut_force[0].size(), 3u);
+    EXPECT_EQ(parsed.suspension.damper_lut_force[3].size(), 3u);
+    EXPECT_EQ(parsed.suspension.damper_lut_force[1].size(), 0u);
+}
+
 // #7: angle-mode steering is clamped by steering.max_angle.
 TEST(CoreA_Params, AngleModeClampsToMaxAngle) {
     VehicleParams p = VehicleParams::default_fsae();
