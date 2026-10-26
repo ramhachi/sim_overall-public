@@ -38,6 +38,10 @@ struct LPVLQRConfig {
     double preview_time = 0.20;             // [s]
     double min_preview_distance = 2.5;      // [m]
     double max_preview_distance = 14.0;     // [m]
+    // Weight of the preview-point curvature in the LQR reference curvature
+    // (rest: current point). 0.70 made the car cut ahead of the centerline
+    // and set the autocross max |n|; 0.20 keeps the lead without the cut.
+    double preview_curvature_weight = 0.20; // [-]
     double speed_preview_time = 1.25;       // [s]
     double max_speed_preview_distance = 30.0; // [m]
     // Speed preview is braking-aware: a slower point ds ahead only caps the
@@ -72,6 +76,9 @@ struct LPVLQRConfig {
     // Lightweight safety filter.  These are conservative operational guards,
     // not a formal CBF guarantee.
     double lateral_accel_fraction = 0.86;   // fraction of mu_y * g (centerline curvature)
+    // Curvature cap is braking-aware: a corner ds ahead allows
+    // sqrt(v_corner^2 + 2*a*ds). Above ~4 m/s^2 the speed P-loop overshoots.
+    double curvature_cap_decel = 3.0;       // [m/s^2]
     double soft_track_margin = 0.90;        // [m]
     double hard_track_margin = 0.30;        // [m]
     double margin_speed_cap = 7.0;          // [m/s]
@@ -157,7 +164,8 @@ public:
         const double preview_s = wrap_s(nearest.s + preview_distance);
         const auto preview_point = track_.get_point(preview_s);
         const double reference_curvature =
-            0.30 * nearest.kappa + 0.70 * preview_point.kappa;
+            (1.0 - config_.preview_curvature_weight) * nearest.kappa
+            + config_.preview_curvature_weight * preview_point.kappa;
 
         double sae_steering = 0.0;
         double required_sae_steering = 0.0;
@@ -687,18 +695,18 @@ private:
     }
 
     double curvature_speed_cap(double s, double speed) const {
-        double max_abs_curvature = 0.0;
-        const double distance = std::clamp(speed * 0.9, 4.0, 22.0);
-        for (double ds = 0.0; ds <= distance + 1e-9; ds += 1.0) {
-            max_abs_curvature = std::max(
-                max_abs_curvature,
-                std::abs(track_.get_curvature(wrap_s(s + ds))));
-        }
-        if (max_abs_curvature < 1e-5) return std::numeric_limits<double>::infinity();
         const double lateral_accel = std::max(
             1.0,
             config_.lateral_accel_fraction * vehicle_params_.tire.mu_y_max * 9.81);
-        return std::sqrt(lateral_accel / max_abs_curvature);
+        double cap = std::numeric_limits<double>::infinity();
+        const double distance = std::clamp(speed * 0.9, 4.0, 22.0);
+        for (double ds = 0.0; ds <= distance + 1e-9; ds += 1.0) {
+            const double curvature = std::abs(track_.get_curvature(wrap_s(s + ds)));
+            if (curvature < 1e-5) continue;
+            cap = std::min(cap, std::sqrt(
+                lateral_accel / curvature + 2.0 * config_.curvature_cap_decel * ds));
+        }
+        return cap;
     }
 
     double wrap_s(double s) const {
