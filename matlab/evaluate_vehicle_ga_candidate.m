@@ -8,6 +8,11 @@ end
 params_path = fullfile(batch_dir, [candidate_id, '.params.json']);
 try
 params = apply_full_design(context.base_params, full_design_vector, context.design_context);
+if exist('compute_vehicle_kc', 'file') ~= 2
+    addpath(fullfile(context.config.project_root, 'suspension_kinematics_design'));
+end
+% K&C follows the candidate's own track/wheelbase/alignment every time.
+params = compute_vehicle_kc(params);
 params.drs.enabled = false;
 params.tire.model_dir = fullfile('output', 'tire_models', context.config.tire_model_name);
 params.tire.model_manifest = fullfile(params.tire.model_dir, 'manifest.json');

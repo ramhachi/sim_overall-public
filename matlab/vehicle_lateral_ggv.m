@@ -22,9 +22,7 @@ if isfile(manifest)
 end
 key = sha256([jsonencode(key_params), tire_id, sprintf('%.6f', binary_info.datenum)]);
 
-if ~exist(config.ggv_cache_dir, 'dir')
-    mkdir(config.ggv_cache_dir);
-end
+[~, ~] = mkdir(config.ggv_cache_dir);  % parallel workers may race here
 ggv_path = fullfile(config.ggv_cache_dir, [key(1:16), '.json']);
 if isfile(ggv_path)
     return;
