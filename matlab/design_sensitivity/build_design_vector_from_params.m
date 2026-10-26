@@ -18,12 +18,9 @@ x = zeros(1, numel(names));
         end
     end
 
-width_penalty = compute_track_width_mass_distribution( ...
-    [12, 12, 14, 14], params.mass.track_f, params.mass.track_r);
 chassis_stiffness = field_or(params.suspension, 'K_chassis', 1000.0);
-chassis_penalty = max(0.0, (chassis_stiffness - 1000.0) / 1000.0 * 4.0);
 
-x(ix('Mass')) = params.mass.m_total - width_penalty - chassis_penalty;
+x(ix('Mass')) = params.mass.m_total;  % no mass model in apply_full_design
 x(ix('FrontDist')) = params.mass.b / max(params.mass.wheelbase, eps);
 x(ix('CGHeight')) = params.mass.h_cg;
 x(ix('Wheelbase')) = params.mass.wheelbase;

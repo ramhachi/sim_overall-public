@@ -57,23 +57,10 @@ function params = apply_full_design(base_params, x, design_context)
     track_f = x(5);
     track_r = x(6);
 
-    % トレッド拡大で増える重量は、サブフレーム側の sprung mass と、
-    % アップライト/アーム側の unsprung mass を一貫した一つのモデルで見積もる。
-    base_unsprung = [12, 12, 14, 14];
-    [width_mass_penalty, m_unsprung] = compute_track_width_mass_distribution( ...
-        base_unsprung, track_f, track_r);
-    
-    % トレードオフ: フレーム剛性向上による重量増
-    % 基準剛性 1000 Nm/deg とし、それ以上なら 1000 Nm/deg あたり約 4.0 kg 増加と仮定
-    chassis_stiffness = 1000; % Default
-    if length(x) >= 31
-        chassis_stiffness = x(31);
-    end
-    chassis_weight_penalty = max(0, (chassis_stiffness - 1000) / 1000.0 * 4.0);
-    
-    % 最終的な質量
-    params.mass.m_total = m_base_target + width_mass_penalty + chassis_weight_penalty;
-    
+    % 質量モデル・トレードオフ（トレッド幅やフレーム剛性による重量増）は入れない。
+    % 寸法・剛性は質量と独立に振り、質量は Mass 変数そのもの。
+    params.mass.m_total = m_base_target;
+
     % 重心位置計算
     params.mass.wheelbase = wb;
     params.mass.b = wb * front_dist;
@@ -103,8 +90,7 @@ function params = apply_full_design(base_params, x, design_context)
         params.mass.Izz = 85.0 * scale_mass * scale_size;
     end
 
-    % バネ下重量は track-width model と同じ一貫した見積もりを使う
-    params.mass.m_unsprung = m_unsprung;
+    params.mass.m_unsprung = base_mass.m_unsprung;
     params.mass.m_sprung = params.mass.m_total - sum(params.mass.m_unsprung);
 
     %% 2. Suspension
@@ -124,16 +110,14 @@ function params = apply_full_design(base_params, x, design_context)
     params.suspension.static_camber = [x(13), x(13), x(14), x(14)] * (pi/180.0);
     params.suspension.static_toe    = [-x(15), x(15), x(16), -x(16)] * (pi/180.0);
     
-    %% 3. Aero (Trade-off)
+    %% 3. Aero (CL_A only; CD_A stays at the base value, no CL-CD trade-off)
     cl_a = x(17);
-    cd_a = compute_aero_cd_a(cl_a, 'cd0', 0.30, 'k_induced', 0.10, 'power', 2.0);
     aero_balance = front_dist;
     if length(x) >= 32
         aero_balance = x(32);
     end
     
     params.aero.CL_A = cl_a;
-    params.aero.CD_A = cd_a;
     params.aero.aero_balance = max(0.20, min(0.80, aero_balance));
     
     %% 4. Powertrain

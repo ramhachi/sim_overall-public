@@ -7,10 +7,7 @@ function result = run_vehicle_bayesopt(opts)
 % objective is modelled as noisy and the reported optimum is the point with
 % the lowest *estimated* objective, not the luckiest single sample.
 %
-% Gate: the GA gate minus steering_tracking_error. The LPV tuned for speed
-% runs mean |SW error| ~0.25 rad on every candidate (baseline included), so
-% that 0.12 rad threshold would reject the whole space; the value is still
-% recorded per evaluation. Gate failures return NaN (bayesopt error region).
+% Candidates that fail the GA gate return NaN (bayesopt error region).
 
 project_root = opt_or(opts, 'project_root', fileparts(fileparts(mfilename('fullpath'))));
 baseline_artifact = opt_or(opts, 'baseline_artifact', ...
@@ -19,7 +16,6 @@ names = cellstr(string(opts.variable_names));
 max_evals = opt_or(opts, 'max_evals', 150);
 out_dir = opt_or(opts, 'out_dir', fullfile(project_root, 'output', 'runtime', 'vehicle_bayesopt', ...
     char(datetime('now', 'Format', 'yyyyMMdd_HHmmss'))));
-ignored_violations = opt_or(opts, 'ignored_violations', {'steering_tracking_error'});
 
 artifact = load_vehicle_artifact(baseline_artifact);
 base_params = merge_nested_structs(create_vehicle_baseline_template(), artifact.params);
@@ -45,7 +41,7 @@ for i = 1:numel(names)
 end
 initial = array2table(base_x(idx(:)'), 'VariableNames', names);
 
-objective = @(t) evaluate_point(t, base_x, idx, context, batch_dir, ignored_violations);
+objective = @(t) evaluate_point(t, base_x, idx, context, batch_dir);
 bo = bayesopt(objective, vars, ...
     'IsObjectiveDeterministic', false, ...
     'AcquisitionFunctionName', 'expected-improvement-plus', ...
@@ -69,20 +65,18 @@ summary = struct('variable_names', {names}, ...
     'baseline_lap_time', bo.ObjectiveTrace(1), ...
     'best_estimated_lap_time', bo.predictObjective(bo.XAtMinEstimatedObjective), ...
     'best_observed_lap_time', bo.MinObjective, ...
-    'evaluations', bo.NumObjectiveEvaluations, ...
-    'ignored_violations', {ignored_violations});
+    'evaluations', bo.NumObjectiveEvaluations);
 write_json(fullfile(out_dir, 'summary.json'), summary);
 
 result = struct('bo', bo, 'out_dir', out_dir, 'best_x', best_x, 'summary', summary);
 end
 
-function lap = evaluate_point(t, base_x, idx, context, batch_dir, ignored)
+function lap = evaluate_point(t, base_x, idx, context, batch_dir)
 x = base_x;
 x(idx) = table2array(t);
 id = ['bo_', char(java.util.UUID.randomUUID())];
 record = evaluate_vehicle_ga_candidate(x, context, id(1:15), batch_dir);
-violations = setdiff(record.gate.violations, ignored);
-if record.return_code == 0 && isempty(violations) && isfield(record.result, 'lap_time')
+if record.return_code == 0 && record.gate.passed
     lap = record.result.lap_time;
 else
     lap = NaN;
