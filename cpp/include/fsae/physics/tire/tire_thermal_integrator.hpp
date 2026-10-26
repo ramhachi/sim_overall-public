@@ -31,7 +31,7 @@ struct TireThermalParams {
     double T_road = 25.0;          // 路面温度 [°C]
 
     // 初期温度
-    double T_initial = 25.0;       // 初期温度 [°C]
+    double T_initial = 35.0;       // 初期温度 [°C]（走行前の暖まった状態。PINN は 40°C 未満の Fx を学習していない）
 
     // 2 ノード（表面＋バルク/カーカス）。m_bulk <= 0 なら 1 ノード（既定）。
     // 推奨値の根拠（実測同定値ではない）: FSAE 10" スリックのトレッド＋カーカスゴム
