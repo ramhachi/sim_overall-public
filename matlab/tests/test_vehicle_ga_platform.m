@@ -28,9 +28,12 @@ classdef test_vehicle_ga_platform < matlab.unittest.TestCase
             schema = build_full_vehicle_design_schema();
             active = vehicle_ga_active_schema(schema);
 
-            testCase.verifyNumElements(active.indices, 38);
+            testCase.verifyNumElements(active.indices, 34);
             testCase.verifyTrue(ismember('DamperF', active.variable_names));
             testCase.verifyFalse(ismember('DamperR', active.variable_names));
+            % K&C LUTs own camber; camber-gain variables would be inert.
+            testCase.verifyFalse(any(ismember({'CamberGainF', 'CamberGainR', ...
+                'POU_Camber_C1_F', 'POU_Camber_C2_F'}, active.variable_names)));
             testCase.verifyTrue(all(ismember(test_vehicle_ga_platform.fixedTireNames(), ...
                 active.fixed_variable_names)));
         end
