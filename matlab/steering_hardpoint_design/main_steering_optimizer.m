@@ -89,8 +89,8 @@ L_U = fl_geom.lower_arm_upright;
 W_C = fl_geom.wheel_center;
 
 x_rack_nominal = W_C(1) + 0.100;
-lb = [x_rack_nominal - 0.050, -0.400, -0.200, W_C(1) + 0.050, W_C(2) - 0.050, -0.150];
-ub = [x_rack_nominal + 0.050, -0.200, -0.050, W_C(1) + 0.150, W_C(2) + 0.050, 0.050];
+lb = [x_rack_nominal - 0.100, -0.450, -0.200, W_C(1) + 0.020, W_C(2) - 0.080, -0.200];
+ub = [x_rack_nominal + 0.100, -0.150, -0.050, W_C(1) + 0.150, W_C(2) + 0.100, 0.050];
 x0 = [x_rack_nominal, -0.300, -0.100, x_rack_nominal, L_U(2) - 0.010, -0.100];
 
 options = optimoptions('fmincon', 'Display', 'iter', 'Algorithm', 'sqp', ...
@@ -295,8 +295,11 @@ end
 [bump_error, act_moment_arm, ~, ~, feasibility] = ...
     eval_steering_candidate(x, base_geom, fr_base_geom, fl_geom, params, opts);
 
-cost = (bump_error / max(opts.bump_tolerance, eps))^2 ...
-    + (feasibility.ackermann_error_rad / max(opts.ackermann_tolerance, eps))^2;
+cost = (bump_error / max(opts.bump_tolerance, eps))^2;
+ack_excess = max(0.0, feasibility.ackermann_error_rad - opts.ackermann_tolerance);
+cost = cost + 1e6 * (ack_excess / max(opts.ackermann_tolerance, eps))^2;
+steering_arm = abs(x(5) - fl_geom.lower_arm_upright(2));
+cost = cost + ((steering_arm - 0.040) / 0.005)^2;
 if ~isfinite(cost)
     cost = 1e12;
     return;
