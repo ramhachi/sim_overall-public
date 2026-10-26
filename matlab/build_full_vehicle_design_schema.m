@@ -15,8 +15,8 @@ core_bounds = [
     10000, 90000;    % 8. Spring R [N/m]
     100,   3000;     % 9. Damper F [Ns/m]
     100,   3000;     % 10. Damper R [Ns/m]
-    0,     5000;     % 11. ARB F [Nm/rad]
-    0,     5000;     % 12. ARB R [Nm/rad]
+    0,     30000;    % 11. ARB F [Nm/rad] (spring roll stiffness is ~13-17e3 Nm/rad)
+    0,     30000;    % 12. ARB R [Nm/rad]
     -5.0,  0.0;      % 13. Camber F [deg]
     -3.0,  0.0;      % 14. Camber R [deg]
     -3.0,  3.0;      % 15. Toe F [deg]
