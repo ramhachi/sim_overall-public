@@ -7,8 +7,8 @@ classdef test_design_sensitivity_offline < matlab.unittest.TestCase
             [x, schema, context] = build_design_vector_from_params(params);
             rebuilt = apply_full_design(params, x, context);
 
-            tc.verifyEqual(numel(x), 46);
-            tc.verifyEqual(numel(schema.variable_names), 46);
+            tc.verifyEqual(numel(x), 60);
+            tc.verifyEqual(numel(schema.variable_names), 60);
             tc.verifyEqual(rebuilt.mass.m_total, params.mass.m_total, 'RelTol', 1e-9);
             tc.verifyEqual(rebuilt.mass.track_f, params.mass.track_f, 'RelTol', 1e-12);
             tc.verifyEqual(rebuilt.mass.track_r, params.mass.track_r, 'RelTol', 1e-12);

@@ -87,6 +87,11 @@ for i = 1:numel(schema.extra_tunable_specs)
         case 'ChassisTwistInertia'
             value = params.suspension.I_twist;
         otherwise
+            if startsWith(spec.name, 'HP_')
+                value = nested_or(params, spec.path, 0.0);  % offsets default to the reference
+                x(spec.index) = value;
+                continue;
+            end
             error('build_design_vector_from_params:unknownExtendedVariable', ...
                 'Unsupported extended variable: %s', spec.name);
     end
@@ -102,6 +107,17 @@ if isfield(s, name) && ~isempty(s.(name))
 else
     value = fallback;
 end
+end
+
+function value = nested_or(s, path, fallback)
+value = fallback;
+for i = 1:numel(path)
+    if ~isstruct(s) || ~isfield(s, path{i})
+        return;
+    end
+    s = s.(path{i});
+end
+value = s;
 end
 
 function value = mean_pair(values, a, b)

@@ -44,6 +44,16 @@ end
 
 design_vector = artifact.design_vector(:);
 expected_count = numel(schema.variable_names);
+% Hardpoint offsets (HP_*) were appended to the schema and default to the
+% reference geometry, so an artifact that predates only them is still valid.
+n = numel(design_vector);
+if n < expected_count && isfield(artifact, 'variable_names') ...
+        && all(startsWith(schema.variable_names(n + 1:end), 'HP_')) ...
+        && isequal(cellstr(string(artifact.variable_names(:)')), schema.variable_names(1:n))
+    schema.variable_names = schema.variable_names(1:n);
+    schema.variable_bounds = schema.variable_bounds(1:n, :);
+    expected_count = n;
+end
 if numel(design_vector) ~= expected_count
     issues = add_issue(issues, 'design_vector_length_mismatch', sprintf( ...
         'Expected %d variables for %s, received %d.', ...

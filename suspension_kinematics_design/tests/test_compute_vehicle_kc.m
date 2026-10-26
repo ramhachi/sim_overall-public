@@ -32,6 +32,27 @@ classdef test_compute_vehicle_kc < matlab.unittest.TestCase
             tc.verifyLessThan(abs(q.suspension.kc.corners.FL.kinematics.camber_vs_travel(2)), ...
                 abs(p.suspension.kc.corners.FL.kinematics.camber_vs_travel(2)));
         end
+
+        function hardpointOffsetsAreMirroredAndIdempotent(tc)
+            p = production_profile();
+            p.suspension.hardpoint_offsets.front = struct('lower_inner_up', 0.05, 'upper_inner_out', -0.03);
+            q = compute_vehicle_kc(p);
+            q2 = compute_vehicle_kc(q);
+            hp0 = p.suspension.kc.corners;
+            hp = q.suspension.kc.corners;
+            % Z down: +50 mm up is -0.05 in Z; outboard on FR is +Y, on FL -Y.
+            tc.verifyEqual(hp.FL.hardpoints.lower_arm_chassis_aft(3), ...
+                hp0.FL.hardpoints.lower_arm_chassis_aft(3) - 0.05, 'AbsTol', 1e-12);
+            tc.verifyEqual(hp.FR.hardpoints.upper_arm_chassis_fore(2), ...
+                hp0.FR.hardpoints.upper_arm_chassis_fore(2) - 0.03, 'AbsTol', 1e-12);
+            tc.verifyEqual(hp.FL.hardpoints.upper_arm_chassis_fore(2), ...
+                hp0.FL.hardpoints.upper_arm_chassis_fore(2) + 0.03, 'AbsTol', 1e-12);
+            tc.verifyEqual(hp.RL.hardpoints.lower_arm_chassis_aft(:), ...
+                hp0.RL.hardpoints.lower_arm_chassis_aft(:), 'AbsTol', 1e-12);
+            tc.verifyEqual(q2.suspension.kc.corners.FL.hardpoints, hp.FL.hardpoints);
+            tc.verifyGreaterThan(q.suspension.kc.front.roll_center_height, ...
+                p.suspension.kc.front.roll_center_height + 0.05);
+        end
     end
 end
 

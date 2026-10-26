@@ -28,7 +28,7 @@ classdef test_vehicle_ga_platform < matlab.unittest.TestCase
             schema = build_full_vehicle_design_schema();
             active = vehicle_ga_active_schema(schema);
 
-            testCase.verifyNumElements(active.indices, 29);
+            testCase.verifyNumElements(active.indices, 43);  % 29 + 14 hardpoint offsets
             testCase.verifyTrue(ismember('DamperF', active.variable_names));
             testCase.verifyFalse(ismember('DamperR', active.variable_names));
             % K&C LUTs own camber; camber-gain variables would be inert.
@@ -48,9 +48,10 @@ classdef test_vehicle_ga_platform < matlab.unittest.TestCase
             [seeds, report] = collect_vehicle_ga_seeds(config.seed_paths, schema);
             statuses = string({report.status});
 
-            testCase.verifySize(seeds, [5, 46]);
-            testCase.verifyGreaterThanOrEqual(nnz(statuses == "accepted_exact"), 2);
-            testCase.verifyGreaterThanOrEqual(nnz(statuses == "accepted_migrated"), 3);
+            % Legacy 46-variable seeds migrate by name; appended hardpoint
+            % offsets start at their (zero) bound centre.
+            testCase.verifySize(seeds, [5, numel(schema.variable_names)]);
+            testCase.verifyEqual(nnz(startsWith(statuses, "accepted")), 5);
             testCase.verifyGreaterThanOrEqual(min(seeds, [], 'all'), ...
                 min(schema.variable_bounds(:, 1)));
             testCase.verifyTrue(all(seeds >= schema.variable_bounds(:, 1)' & ...
