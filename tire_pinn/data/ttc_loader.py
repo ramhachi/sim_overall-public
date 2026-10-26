@@ -17,6 +17,7 @@ from .tire_catalog import TireCatalog
 CSV_TEST_TYPE_PATTERN = re.compile(r"^(Db|Cr|Cmb)_")
 INPUT_COLUMNS = ["SR", "SA", "Fz", "IA", "TSTC"]
 OUTPUT_COLUMNS = ["Fx", "Fy", "Mx", "Mz"]
+MIN_ROAD_SPEED_KPH = 10.0
 INPUT_UNITS = {
     "SR": "ratio",
     "SA": "deg",
@@ -149,7 +150,17 @@ class TTCDataLoader:
                 raise ValueError(
                     f"No TTC samples at {self.pressure_filter_kpa} kPa for {self.dataset_id}"
                 )
-        df = df.drop(columns="P", errors="ignore")
+        if "V" in df.columns:
+            # TTC sweeps run at 25-72 kph. Crawl segments (Cr warm-up at ~3 kph)
+            # carry cold TSTC, |SR| noise up to 1.5 and Fx~0; fitting them
+            # teaches the model "cold or high slip => no Fx".
+            keep = df["V"] >= MIN_ROAD_SPEED_KPH
+            print(
+                f"  Speed filter V>={MIN_ROAD_SPEED_KPH:.0f} kph: "
+                f"{int(keep.sum())}/{len(df)} samples kept"
+            )
+            df = df[keep]
+        df = df.drop(columns=["P", "V"], errors="ignore")
         df = df.dropna().reset_index(drop=True)
         if "source_test_type" in df.columns:
             df["source_test_type"] = df["source_test_type"].fillna("Unknown")
@@ -214,6 +225,8 @@ class TTCDataLoader:
         )
         if "P" in df_raw.columns:
             extracted["P"] = pd.to_numeric(df_raw["P"], errors="coerce").astype(np.float32)
+        if "V" in df_raw.columns:
+            extracted["V"] = pd.to_numeric(df_raw["V"], errors="coerce").astype(np.float32)
         extracted["source_file"] = path.name
         extracted["source_path"] = str(path)
         extracted["source_id"] = path.stem

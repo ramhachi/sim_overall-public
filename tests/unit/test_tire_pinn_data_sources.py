@@ -379,6 +379,26 @@ def test_ttc_data_loader_builds_force_component_masks_from_source_type(tmp_path:
             raise AssertionError(f"Unexpected source label in test dataset: {label}")
 
 
+def test_ttc_data_loader_drops_crawl_speed_rows(tmp_path: Path):
+    tire_name = "Hoosier 18.0X6.0-10, R20"
+    cr_rows = [
+        [0.0, 40.0, 400.0, 4.0, 0.0, 21.0, 21.2, 80.0, 25.0, 300.0, -1000.0, 1.0, 20.0, 0.02, 0.3, 30.0, 60.0, 60.0, 61.0, 25.0, 0.01],
+        # Warm-up crawl: cold, noisy SR, no Fx.
+        [0.1, 3.0, 30.0, 0.0, 0.0, 21.0, 21.2, 80.0, 1.0, 0.0, -1000.0, 1.0, 0.0, 0.0, 0.0, 30.0, 28.0, 28.0, 28.0, 25.0, 1.2],
+    ]
+    _write_raw_dat(
+        tmp_path / "RunData_Cornering_ASCII_SI_Round9" / "B2356run28.dat",
+        tire_name,
+        cr_rows,
+    )
+
+    loader = TTCDataLoader(normalize=False, tire_name="Hoosier_18p0X6p0-10_R20", data_dir=tmp_path)
+
+    assert len(loader.df) == 1
+    assert loader.df["SR"].abs().max() < 0.1
+    assert "V" not in loader.df.columns
+
+
 def test_data_loss_and_r2_ignore_unsupervised_force_components():
     pred = torch.tensor(
         [
