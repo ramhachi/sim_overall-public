@@ -610,11 +610,20 @@ class CamberThrustLoss(nn.Module):
     symmetry around IA=0 and caps camber-generated lateral force.
     """
 
-    def __init__(self, ia_deg: float = 3.0, camber_mu_cap: float = 0.25, epsilon: float = 1e-6):
+    def __init__(
+        self,
+        ia_deg: float = 3.0,
+        camber_mu_cap: float = 0.25,
+        epsilon: float = 1e-6,
+        fx_weight: float = 1.0,
+        fx_threshold_n: float = 50.0,
+    ):
         super().__init__()
         self.ia_deg = ia_deg
         self.camber_mu_cap = camber_mu_cap
         self.epsilon = epsilon
+        self.fx_weight = fx_weight
+        self.fx_threshold_n = max(fx_threshold_n, 1.0)
 
     def forward(
         self, model: nn.Module, colloc_batch: torch.Tensor
@@ -626,6 +635,8 @@ class CamberThrustLoss(nn.Module):
                 "camber_thrust_loss": 0.0,
                 "camber_asymmetry_mean": 0.0,
                 "camber_cap_violation_rate": 0.0,
+                "camber_fx_loss": 0.0,
+                "camber_fx_max": 0.0,
             }
 
         x_pos = colloc_batch.clone()
@@ -637,20 +648,33 @@ class CamberThrustLoss(nn.Module):
         x_pos[:, 3] = self.ia_deg
         x_neg[:, 3] = -self.ia_deg
 
-        fy_pos = model(x_pos)[:, 1]
-        fy_neg = model(x_neg)[:, 1]
+        pred_pos = model(x_pos)
+        pred_neg = model(x_neg)
+        fy_pos = pred_pos[:, 1]
+        fy_neg = pred_neg[:, 1]
 
         fz = torch.abs(colloc_batch[:, 2])
         force_scale = self.camber_mu_cap * fz + self.epsilon
         asymmetry = (fy_pos + fy_neg) / force_scale
         cap_excess = F.relu(torch.maximum(torch.abs(fy_pos), torch.abs(fy_neg)) / force_scale - 1.0)
 
-        loss = torch.mean(asymmetry**2 + cap_excess**2)
+        # Static camber must not create a longitudinal force at zero slip.
+        # Huber keeps the penalty bounded for large extrapolation errors.
+        fx_scale = torch.clamp(0.05 * fz, min=self.fx_threshold_n)
+        fx_zero = torch.zeros_like(fx_scale)
+        fx_loss = F.smooth_l1_loss(pred_pos[:, 0] / fx_scale, fx_zero, beta=1.0)
+        fx_loss = fx_loss + F.smooth_l1_loss(pred_neg[:, 0] / fx_scale, fx_zero, beta=1.0)
+
+        loss = torch.mean(asymmetry**2 + cap_excess**2) + self.fx_weight * fx_loss
 
         metrics = {
             "camber_thrust_loss": loss.item(),
             "camber_asymmetry_mean": torch.mean(torch.abs(asymmetry)).item(),
             "camber_cap_violation_rate": (cap_excess > 0).float().mean().item(),
+            "camber_fx_loss": fx_loss.item(),
+            "camber_fx_max": torch.maximum(
+                pred_pos[:, 0].abs().max(), pred_neg[:, 0].abs().max()
+            ).item(),
         }
 
         return loss, metrics

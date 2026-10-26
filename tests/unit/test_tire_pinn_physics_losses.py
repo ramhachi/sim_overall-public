@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from tire_pinn.losses.physics_losses import (
@@ -337,3 +338,21 @@ def test_zero_slip_loss_uses_separate_force_and_moment_scales():
     assert torch.isclose(loss, torch.tensor(expected))
     assert metrics["zero_slip_force_threshold"] == 2.0
     assert metrics["zero_slip_moment_threshold"] == 5.0
+
+
+class CamberFxModel(torch.nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        fx = x[:, 3] * 100.0
+        zero = torch.zeros_like(fx)
+        return torch.stack([fx, zero, zero, zero], dim=1)
+
+
+def test_camber_thrust_loss_penalizes_zero_slip_fx():
+    loss_fn = CamberThrustLoss(ia_deg=3.0, fx_threshold_n=50.0)
+    batch = torch.tensor([[0.0, 0.0, 800.0, 0.0, 60.0]])
+
+    loss, metrics = loss_fn(CamberFxModel(), batch)
+
+    assert metrics["camber_fx_max"] == pytest.approx(300.0)
+    assert metrics["camber_fx_loss"] > 0.0
+    assert loss > 0.0

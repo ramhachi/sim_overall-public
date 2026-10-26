@@ -106,6 +106,7 @@ class PINNTrainer:
             mu_cap=float(friction_cfg.get("mu_cap", 2.6)),
         ).to(device)
         mz_trail_cfg = self.physics_config.get("mz_trail", {})
+        camber_cfg = self.physics_config.get("camber_thrust", {})
         smoothness_cfg = self.physics_config.get("section_smoothness", {})
         self.physics_manager = PhysicsLossManager(
             zero_slip_loss=ZeroSlipLoss(
@@ -148,7 +149,12 @@ class PINNTrainer:
                 sign_loss_weight=float(mz_trail_cfg.get("sign_loss_weight", 1.0)),
                 odd_loss_weight=float(mz_trail_cfg.get("odd_loss_weight", 0.25)),
             ).to(device),
-            camber_thrust_loss=CamberThrustLoss().to(device),
+            camber_thrust_loss=CamberThrustLoss(
+                ia_deg=float(camber_cfg.get("ia_deg", 3.0)),
+                camber_mu_cap=float(camber_cfg.get("camber_mu_cap", 0.25)),
+                fx_weight=float(camber_cfg.get("fx_weight", 1.0)),
+                fx_threshold_n=float(camber_cfg.get("fx_threshold_n", 50.0)),
+            ).to(device),
             section_smoothness_loss=SectionSmoothnessLoss(
                 sr_delta=float(smoothness_cfg.get("sr_delta", 0.015)),
                 sa_delta_deg=float(smoothness_cfg.get("sa_delta_deg", 0.75)),

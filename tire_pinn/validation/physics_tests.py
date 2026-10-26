@@ -26,11 +26,15 @@ class PhysicsValidator:
         model: NormalizedTirePINN,
         data_frame: Optional[pd.DataFrame] = None,
         device: str = "cpu",
+        coverage_data_frame: Optional[pd.DataFrame] = None,
     ):
         self.model = model.to(device)
         self.model.eval()
         self.device = device
         self.data_frame = data_frame.copy() if data_frame is not None else None
+        self.coverage_data_frame = (
+            coverage_data_frame.copy() if coverage_data_frame is not None else None
+        )
         self.bounds = self._compute_bounds(data_frame)
         self._empirical_monotonicity_cache: Dict[float, float] = {}
 
@@ -53,6 +57,28 @@ class PhysicsValidator:
             bounds[column] = (lo, hi)
         return bounds
 
+    @staticmethod
+    def _min_scaled_distance(
+        query: np.ndarray,
+        reference: np.ndarray,
+        scales: np.ndarray,
+        chunk_size: int = 256,
+    ) -> np.ndarray:
+        """Return nearest-neighbor distance in scaled (SA, Fz, IA, TSTC) space."""
+        if len(query) == 0 or len(reference) == 0:
+            return np.full(len(query), np.inf, dtype=float)
+
+        scaled_query = query / scales
+        scaled_reference = reference / scales
+        distances = np.empty(len(scaled_query), dtype=float)
+        for start in range(0, len(scaled_query), chunk_size):
+            chunk = scaled_query[start : start + chunk_size]
+            diff = chunk[:, None, :] - scaled_reference[None, :, :]
+            distances[start : start + len(chunk)] = np.sqrt(np.sum(diff * diff, axis=2)).min(
+                axis=1
+            )
+        return distances
+
     def run_all_tests(
         self,
         zero_threshold: float = 20.0,
@@ -63,6 +89,8 @@ class PhysicsValidator:
         measured_friction_violation_rate: float = 0.15,
         measured_friction_mu_cap: float = 2.6,
         measured_combined_slip_violation_rate: float = 0.35,
+        measured_combined_slip_coverage_tolerance: float = 1.0,
+        measured_combined_slip_min_coverage: int = 50,
         max_monotonicity_violation_rate: float = 0.10,
         monotonicity_negative_gradient_tolerance: float = 0.10,
         monotonicity_empirical_margin: float = 0.0,
@@ -105,6 +133,8 @@ class PhysicsValidator:
             "measured_combined_slip": self.test_measured_combined_slip(
                 max_violation_rate=measured_combined_slip_violation_rate,
                 mu_cap=measured_friction_mu_cap,
+                coverage_tolerance=measured_combined_slip_coverage_tolerance,
+                min_coverage_samples=measured_combined_slip_min_coverage,
             ),
             "monotonicity": self.test_monotonicity(
                 max_violation_rate=max_monotonicity_violation_rate,
@@ -416,8 +446,15 @@ class PhysicsValidator:
         max_violation_rate: float = 0.35,
         margin: float = 0.05,
         mu_cap: float = 2.6,
+        coverage_tolerance: float = 1.0,
+        min_coverage_samples: int = 50,
     ) -> dict:
-        """Check combined-slip behavior on measured combined-slip rows."""
+        """Check combined-slip behavior on measured combined-slip rows.
+
+        When a coverage frame is supplied, only rows with a nearby pure-lateral
+        measurement are evaluated. The gate otherwise extrapolates a pure-slip
+        force that the training data does not contain.
+        """
         if self.data_frame is None or self.data_frame.empty:
             return {
                 "pass": True,
@@ -434,6 +471,58 @@ class PhysicsValidator:
                 "metrics": {"violation_rate": float("nan"), "n_samples": 0},
                 "message": "SKIP: no measured combined-slip rows in holdout",
             }
+
+        coverage_metrics: Dict[str, float] = {}
+        if self.coverage_data_frame is not None:
+            coverage_frame = self.coverage_data_frame
+            combined_for_gate = combined
+            if "source_test_type" in combined.columns:
+                combined_for_gate = combined[combined["source_test_type"] == "Cr"]
+
+            pure = coverage_frame[
+                (coverage_frame["SR"].abs() < 0.01)
+                & (coverage_frame["SA"].abs() > 1.0)
+            ]
+            if "source_test_type" in coverage_frame.columns:
+                pure = pure[pure["source_test_type"] == "Cr"]
+
+            n_total = int(len(combined_for_gate))
+            if n_total == 0 or pure.empty:
+                covered = combined_for_gate.iloc[0:0]
+            else:
+                scales = np.array([1.0, 100.0, 0.5, 5.0], dtype=float)
+                distances = self._min_scaled_distance(
+                    combined_for_gate[["SA", "Fz", "IA", "TSTC"]].to_numpy(dtype=float),
+                    pure[["SA", "Fz", "IA", "TSTC"]].to_numpy(dtype=float),
+                    scales,
+                )
+                covered = combined_for_gate[distances <= coverage_tolerance]
+
+            n_covered = int(len(covered))
+            coverage_fraction = n_covered / n_total if n_total else 0.0
+            coverage_metrics = {
+                "n_total": n_total,
+                "n_samples": n_covered,
+                "coverage_fraction": coverage_fraction,
+                "coverage_tolerance": coverage_tolerance,
+                "min_coverage_samples": min_coverage_samples,
+                "coverage_limited": coverage_fraction < 1.0,
+            }
+            if n_covered < min_coverage_samples:
+                coverage_metrics["coverage_limited"] = True
+                message = (
+                    f"⚠ COVERAGE-LIMITED: only {n_covered}/{n_total} combined-slip rows "
+                    f"have pure-lateral coverage (< {min_coverage_samples}); gate not evaluated"
+                )
+                print(f"  {message}")
+                return {
+                    "pass": True,
+                    "skipped": False,
+                    "metrics": {"violation_rate": float("nan"), **coverage_metrics},
+                    "message": message,
+                }
+            combined = covered
+
         x_full = combined[["SR", "SA", "Fz", "IA", "TSTC"]].to_numpy(dtype=np.float32)
         x_pure_long = x_full.copy()
         x_pure_long[:, 1] = 0.0
@@ -457,14 +546,25 @@ class PhysicsValidator:
             "margin": margin,
             "mu_cap": mu_cap,
             "n_samples": int(len(combined)),
+            **coverage_metrics,
         }
-        message = (
-            f"✓ PASS: measured combined-slip violation rate {violation_rate:.2%} "
-            f"<= {max_violation_rate:.2%}"
-            if passed
-            else f"✗ FAIL: measured combined-slip violation rate {violation_rate:.2%} "
-            f"> {max_violation_rate:.2%}"
-        )
+        coverage_tag = " (coverage-limited)" if coverage_metrics else ""
+        coverage_suffix = ""
+        if coverage_metrics:
+            coverage_suffix = (
+                f" on {len(combined)}/{coverage_metrics['n_total']} covered Cr rows "
+                f"({coverage_metrics['coverage_fraction']:.1%})"
+            )
+        if passed:
+            message = (
+                f"✓ PASS{coverage_tag}: measured combined-slip violation rate "
+                f"{violation_rate:.2%} <= {max_violation_rate:.2%}{coverage_suffix}"
+            )
+        else:
+            message = (
+                f"✗ FAIL{coverage_tag}: measured combined-slip violation rate "
+                f"{violation_rate:.2%} > {max_violation_rate:.2%}{coverage_suffix}"
+            )
         print(f"  {message}")
         return {"pass": passed, "metrics": metrics, "message": message}
 

@@ -122,6 +122,9 @@ physics:
   camber_thrust:
     n_colloc_points: 128
     camber_mu_cap: 0.25
+    ia_deg: 3.0
+    fx_weight: 1.0
+    fx_threshold_n: 50.0
 
   # Smooth pure-slip sections. This is a weak shape prior to prefer
   # sigmoid/Magic-Formula-like curves without forcing exact target points.
@@ -234,11 +237,25 @@ tire_profiles:
       batch_size: 2048
       patience: 20
     data:
+      split_strategy: random
       random_seed: 1
       max_samples_total: 40000
+      mirror_negative_ia: true
       source_component_masks:
         Db: [1.0, 0.0, 0.0, 0.0]
-        Cr: [0.0, 1.0, 0.0, 1.0]
+        Cr: [1.0, 1.0, 0.0, 1.0]
+    data_loss:
+      near_zero_weights:
+        fx:
+          enabled: true
+          sr_abs: 0.03
+          sa_abs: 1.0
+          weight: 5.0
+        fy:
+          enabled: true
+          sa_abs: 1.0
+          sr_abs: 0.03
+          weight: 5.0
     curriculum:
       final_weights:
         zero: 0.05
@@ -246,11 +263,11 @@ tire_profiles:
         fric: 0.05
         mono: 1.20
         fy_sa_zero: 0.15
-        combined: 0.02
+        combined: 0.20
         stiffness: 0.005
         high_sa_lateral: 0.05
         mz_trail: 0.01
-        camber: 0.01
+        camber: 0.10
     validation_targets:
       r2_min: 0.90
       friction_violation_rate: 0.12
@@ -786,6 +803,8 @@ validation_targets:
   measured_friction_violation_rate: 0.15  # measured holdout distribution
   measured_friction_mu_cap: 2.6
   measured_combined_slip_violation_rate: 0.35
+  measured_combined_slip_coverage_tolerance: 1.0
+  measured_combined_slip_min_coverage: 50
   symmetry_mean_max_error: 0.25  # mean normalized antisymmetry
   symmetry_p95_max_error: 0.45   # robust tail metric (p95)
   monotonicity_violation_rate: 0.10

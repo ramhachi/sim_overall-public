@@ -51,8 +51,13 @@ class TTCDataLoader:
         source_component_masks: Dict[str, list[float]] | None = None,
         pressure_filter_kpa: float | None = None,
         pressure_tolerance_kpa: float = 3.5,
+        mirror_negative_ia: bool = False,
     ):
         self.normalize = normalize
+        # TTC cornering data only covers positive camber. Mirroring the train
+        # split teaches the model the physically expected IA symmetry without
+        # leaking synthetic rows into validation/test.
+        self.mirror_negative_ia = mirror_negative_ia
         # Keep only samples at one inflation pressure (TTC P column, kPa) so the
         # pressure sweep is not pooled into one 5-input model (#18). None = no filter.
         self.pressure_filter_kpa = pressure_filter_kpa
@@ -317,18 +322,32 @@ class TTCDataLoader:
         if train_indices.size == 0:
             raise ValueError("Cannot fit normalization on an empty training split")
 
-        x_train = self.df.iloc[train_indices][input_cols]
-        self.input_mean = x_train.mean().values.astype(np.float32)
-        self.input_std = (
-            x_train.std().replace(0.0, 1.0).fillna(1.0).values.astype(np.float32)
-        )
-
-        train_frame = self.df.iloc[train_indices]
+        x_train = self.df.iloc[train_indices][input_cols].to_numpy(dtype=np.float32)
+        y_train = self.df.iloc[train_indices][output_cols].to_numpy(dtype=np.float32)
         train_mask = self.component_mask[train_indices] > 0
-        output_mean = np.zeros(len(output_cols), dtype=np.float32)
-        output_std = np.ones(len(output_cols), dtype=np.float32)
-        for j, col in enumerate(output_cols):
-            values = train_frame.loc[train_mask[:, j], col]
+        self.fit_normalization_from_arrays(x_train, y_train, train_mask)
+
+    def fit_normalization_from_arrays(
+        self,
+        x_train: np.ndarray,
+        y_train: np.ndarray,
+        train_mask: np.ndarray,
+    ) -> None:
+        """Fit normalization from already-materialized train arrays."""
+        if x_train.size == 0:
+            raise ValueError("Cannot fit normalization on an empty training split")
+        train_mask = np.asarray(train_mask) > 0.0
+
+        self.input_mean = x_train.mean(axis=0).astype(np.float32)
+        input_std = x_train.std(axis=0).astype(np.float32)
+        input_std[input_std == 0.0] = 1.0
+        input_std[np.isnan(input_std)] = 1.0
+        self.input_std = input_std
+
+        output_mean = np.zeros(y_train.shape[1], dtype=np.float32)
+        output_std = np.ones(y_train.shape[1], dtype=np.float32)
+        for j in range(y_train.shape[1]):
+            values = y_train[train_mask[:, j], j]
             if len(values) == 0:
                 continue
             output_mean[j] = float(values.mean())
@@ -342,6 +361,40 @@ class TTCDataLoader:
         print("Input std:", self.input_std)
         print("Output mean:", self.output_mean)
         print("Output std:", self.output_std)
+
+    def _mirror_negative_ia(
+        self,
+        x_train: np.ndarray,
+        y_train: np.ndarray,
+        train_mask: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Mirror cambered cornering rows across IA=0 for train only.
+
+        The TTC cornering sweep only contains positive camber. A physical mirror
+        is (SA, IA) -> (-SA, -IA), with Fy/Mx/Mz negated and Fx unchanged.
+        """
+        mirror_mask = (train_mask[:, 1] > 0.0) & (x_train[:, 3] > 0.0)
+        if not mirror_mask.any():
+            return x_train, y_train, train_mask
+
+        mirrored_x = x_train[mirror_mask].copy()
+        mirrored_y = y_train[mirror_mask].copy()
+        mirrored_mask = train_mask[mirror_mask].copy()
+        mirrored_x[:, 1] *= -1.0
+        mirrored_x[:, 3] *= -1.0
+        mirrored_y[:, 1] *= -1.0
+        mirrored_y[:, 2] *= -1.0
+        mirrored_y[:, 3] *= -1.0
+
+        print(
+            f"  Mirrored negative-IA train rows: {int(mirror_mask.sum())} "
+            f"(train {len(x_train)} -> {len(x_train) + len(mirrored_x)})"
+        )
+        return (
+            np.concatenate([x_train, mirrored_x], axis=0),
+            np.concatenate([y_train, mirrored_y], axis=0),
+            np.concatenate([train_mask, mirrored_mask], axis=0),
+        )
 
     def get_normalization_params(self) -> Dict[str, torch.Tensor]:
         if self.input_mean is None:
@@ -422,13 +475,21 @@ class TTCDataLoader:
             "random_seed": random_seed,
             "split_strategy": split_strategy,
         }
+        train_X = X[train_idx]
+        train_y = y[train_idx]
+        train_mask = component_mask[train_idx]
+        if self.mirror_negative_ia:
+            train_X, train_y, train_mask = self._mirror_negative_ia(
+                train_X, train_y, train_mask
+            )
+
         if self.normalize:
-            self.fit_normalization(train_idx)
+            self.fit_normalization_from_arrays(train_X, train_y, train_mask)
 
         train_dataset = TensorDataset(
-            torch.tensor(X[train_idx]),
-            torch.tensor(y[train_idx]),
-            torch.tensor(component_mask[train_idx]),
+            torch.tensor(train_X),
+            torch.tensor(train_y),
+            torch.tensor(train_mask),
         )
         val_dataset = TensorDataset(
             torch.tensor(X[val_idx]),

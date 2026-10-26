@@ -396,7 +396,7 @@ class PhysicsEnforcedTireModel(nn.Module):
         gate = torch.exp(-slip_metric).unsqueeze(1)
         correction = torch.stack(
             [
-                zero_output[:, 0],
+                torch.zeros_like(zero_output[:, 0]),
                 zero_output[:, 1],
                 torch.zeros_like(zero_output[:, 2]),
                 zero_output[:, 3],
@@ -404,6 +404,18 @@ class PhysicsEnforcedTireModel(nn.Module):
             dim=1,
         )
         return y - gate * correction
+
+    def _apply_fx_zero_sr_correction(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        if self.zero_slip_sr_scale <= 0.0:
+            return y
+
+        zero_input = x.clone()
+        zero_input[:, 0] = 0.0
+        zero_output = self.base_model(zero_input)
+        gate = torch.exp(-((x[:, 0] / self.zero_slip_sr_scale) ** 2))
+        y_out = y.clone()
+        y_out[:, 0] = y[:, 0] - gate * zero_output[:, 0]
+        return y_out
 
     def _apply_symmetry_projection(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         if self.symmetry_sr_scale <= 0.0 or self.symmetry_ia_scale_deg <= 0.0:
@@ -415,6 +427,7 @@ class PhysicsEnforcedTireModel(nn.Module):
             mirror_input,
             self.base_model(mirror_input),
         )
+        mirror_output = self._apply_fx_zero_sr_correction(mirror_input, mirror_output)
 
         symmetry_metric = (x[:, 0] / self.symmetry_sr_scale) ** 2 + (
             x[:, 3] / self.symmetry_ia_scale_deg
@@ -434,6 +447,7 @@ class PhysicsEnforcedTireModel(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.base_model(x)
         y = self._apply_zero_slip_correction(x, y)
+        y = self._apply_fx_zero_sr_correction(x, y)
         y = self._apply_symmetry_projection(x, y)
         y = self._apply_sa_zero_fy_correction(x, y)  # Must come after symmetry
 

@@ -89,7 +89,9 @@ _PHYSICS_SECTION_KEYS: Dict[str, set[str]] = {
         "min_trail_m", "trail_margin_m", "min_lateral_force_n",
         "sign_loss_weight", "odd_loss_weight", "n_colloc_points",
     },
-    "camber_thrust": {"camber_mu_cap", "n_colloc_points"},
+    "camber_thrust": {
+        "camber_mu_cap", "n_colloc_points", "ia_deg", "fx_weight", "fx_threshold_n",
+    },
     "section_smoothness": {
         "sr_delta", "sa_delta_deg", "mu_cap", "mz_scale_m", "force_deadband",
         "mz_deadband", "mz_weight", "slope_sign_weight", "n_colloc_points",
@@ -290,6 +292,7 @@ def evaluate_checkpoint(
     dataset_info: Dict[str, Any],
     tire_model_name: str,
     config: Dict[str, Any],
+    coverage_data_frame: Any = None,
 ) -> Dict[str, Any]:
     load_checkpoint_into_model(model, checkpoint_path, device)
     runtime_model = build_runtime_model(model, config)
@@ -335,7 +338,12 @@ def evaluate_checkpoint(
         )
     )
 
-    validator = PhysicsValidator(runtime_model, data_frame=eval_data_frame, device=device)
+    validator = PhysicsValidator(
+        runtime_model,
+        data_frame=eval_data_frame,
+        device=device,
+        coverage_data_frame=coverage_data_frame,
+    )
     physics_results = validator.run_all_tests(
         zero_threshold=float(
             validation_targets.get(
@@ -355,6 +363,12 @@ def evaluate_checkpoint(
         ),
         measured_combined_slip_violation_rate=float(
             validation_targets.get("measured_combined_slip_violation_rate", 0.35)
+        ),
+        measured_combined_slip_coverage_tolerance=float(
+            validation_targets.get("measured_combined_slip_coverage_tolerance", 1.0)
+        ),
+        measured_combined_slip_min_coverage=int(
+            validation_targets.get("measured_combined_slip_min_coverage", 50)
         ),
         max_monotonicity_violation_rate=float(
             validation_targets.get("monotonicity_violation_rate", 0.10)
@@ -535,6 +549,7 @@ def main() -> int:
         source_component_masks=data_config.get("source_component_masks"),
         pressure_filter_kpa=data_config.get("pressure_filter_kpa"),
         pressure_tolerance_kpa=data_config.get("pressure_tolerance_kpa", 3.5),
+        mirror_negative_ia=bool(data_config.get("mirror_negative_ia", False)),
     )
     train_loader, val_loader, test_loader = data_loader.create_dataloaders(
         batch_size=batch_size,
@@ -545,6 +560,7 @@ def main() -> int:
         num_workers=config["hardware"]["num_workers"],
         split_strategy=data_config.get("split_strategy", "group"),
     )
+    train_frame = data_loader.get_split_frame("train")
     val_frame = data_loader.get_split_frame("val")
     test_frame = data_loader.get_split_frame("test")
     split_metadata = data_loader.get_split_metadata()
@@ -635,6 +651,7 @@ def main() -> int:
                 dataset_info=dataset_info,
                 tire_model_name=tire_model_name,
                 config=config,
+                coverage_data_frame=train_frame,
             )
         )
 
@@ -686,6 +703,7 @@ def main() -> int:
         dataset_info=dataset_info,
         tire_model_name=tire_model_name,
         config=config,
+        coverage_data_frame=train_frame,
     )
     test_summary = test_candidate["validation_summary"]
     test_r2 = test_summary["r2"]

@@ -641,3 +641,41 @@ def test_ttc_data_loader_pressure_filter_keeps_only_running_pressure(tmp_path: P
             data_dir=tmp_path,
             pressure_filter_kpa=200.0,
         )
+
+
+def test_mirror_negative_ia_flips_sa_ia_fy_mz_and_keeps_fx():
+    loader = object.__new__(TTCDataLoader)
+    x = np.array(
+        [
+            [0.1, 2.0, 800.0, 4.0, 60.0],
+            [0.1, -2.0, 800.0, 4.0, 60.0],
+            [0.1, 2.0, 800.0, 0.0, 60.0],
+            [0.1, 2.0, 800.0, -2.0, 60.0],
+        ],
+        dtype=np.float32,
+    )
+    y = np.array(
+        [
+            [10.0, 100.0, 5.0, 20.0],
+            [20.0, -100.0, 6.0, -20.0],
+            [30.0, 50.0, 0.0, 10.0],
+            [40.0, 0.0, 0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    mask = np.ones((4, 4), dtype=np.float32)
+
+    mirrored_x, mirrored_y, mirrored_mask = loader._mirror_negative_ia(x, y, mask)
+
+    assert mirrored_x.shape == (6, 5)
+    assert mirrored_y.shape == (6, 4)
+    assert mirrored_mask.shape == (6, 4)
+    assert mirrored_x[4, 1] == pytest.approx(-2.0)
+    assert mirrored_x[4, 3] == pytest.approx(-4.0)
+    assert mirrored_y[4, 0] == pytest.approx(10.0)
+    assert mirrored_y[4, 1] == pytest.approx(-100.0)
+    assert mirrored_y[4, 2] == pytest.approx(-5.0)
+    assert mirrored_y[4, 3] == pytest.approx(-20.0)
+    assert mirrored_x[5, 1] == pytest.approx(2.0)
+    assert mirrored_x[5, 3] == pytest.approx(-4.0)
+    assert mirrored_y[5, 1] == pytest.approx(100.0)

@@ -85,3 +85,68 @@ def test_measured_combined_slip_uses_holdout_rows():
     result = bad.test_measured_combined_slip(max_violation_rate=0.0, margin=0.0, mu_cap=2.0)
     assert not result["pass"]
     assert result["metrics"]["violation_rate"] > 0.0
+
+
+def _coverage_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "SR": [0.0, 0.0, 0.0],
+            "SA": [2.0, -2.0, 4.0],
+            "Fz": [1200.0, 900.0, 1100.0],
+            "IA": [0.0, 0.0, 0.0],
+            "TSTC": [30.0, 35.0, 40.0],
+            "source_test_type": ["Cr", "Cr", "Cr"],
+        }
+    )
+
+
+def test_measured_combined_slip_filters_uncovered_rows():
+    frame = _measured_frame()
+    frame["source_test_type"] = "Cr"
+    frame.loc[len(frame)] = [0.1, 8.0, 2000.0, 0.0, 80.0, "Cr"]
+    frame.loc[len(frame)] = [0.1, 2.0, 1200.0, 0.0, 30.0, "Db"]
+
+    validator = PhysicsValidator(
+        ZeroForceModel(), data_frame=frame, coverage_data_frame=_coverage_frame()
+    )
+    result = validator.test_measured_combined_slip(
+        max_violation_rate=0.0, min_coverage_samples=1
+    )
+    assert result["pass"]
+    assert result["metrics"]["n_total"] == 4
+    assert result["metrics"]["n_samples"] == 3
+    assert result["metrics"]["coverage_fraction"] == 0.75
+    assert result["metrics"]["coverage_limited"]
+    assert "covered Cr rows" in result["message"]
+
+
+def test_measured_combined_slip_min_coverage_is_coverage_limited():
+    frame = _measured_frame()
+    frame["source_test_type"] = "Cr"
+
+    validator = PhysicsValidator(
+        ZeroForceModel(), data_frame=frame, coverage_data_frame=_coverage_frame()
+    )
+    result = validator.test_measured_combined_slip(
+        max_violation_rate=0.0, min_coverage_samples=4
+    )
+    assert result["pass"]
+    assert not result["skipped"]
+    assert result["metrics"]["n_samples"] == 3
+    assert result["metrics"]["coverage_limited"]
+    assert "gate not evaluated" in result["message"]
+
+
+def test_measured_combined_slip_still_fails_on_covered_rows():
+    frame = _measured_frame()
+    frame["source_test_type"] = "Cr"
+
+    validator = PhysicsValidator(
+        CombinedBoostModel(), data_frame=frame, coverage_data_frame=_coverage_frame()
+    )
+    result = validator.test_measured_combined_slip(
+        max_violation_rate=0.0, margin=0.0, mu_cap=2.0, min_coverage_samples=1
+    )
+    assert not result["pass"]
+    assert result["metrics"]["n_samples"] == 3
+    assert result["metrics"]["violation_rate"] > 0.0
