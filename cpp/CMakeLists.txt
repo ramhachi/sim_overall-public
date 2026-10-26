@@ -312,3 +312,5 @@ if(BUILD_TESTS)
         FIXTURES_REQUIRED ggv_quick
         PASS_REGULAR_EXPRESSION "\"lap_completed\":true")
 endif()
+add_executable(bake_tire_lut src/bake_tire_lut.cpp)
+target_link_libraries(bake_tire_lut PRIVATE fsae_core)

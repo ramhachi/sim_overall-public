@@ -617,6 +617,45 @@ TEST(RealNNModel, ExportedRuntimeMatchesTestVectors) {
     }
 }
 
+TEST(RealNNModel, RawLutMatchesNetworkAtGridNodes) {
+    namespace fs = std::filesystem;
+
+    const fs::path source_root = fs::path(__FILE__).parent_path().parent_path().parent_path();
+    const fs::path manifest_path =
+        source_root / "output" / "tire_models" / "Hoosier_18p0X6p0-10_R20_Rim6" / "manifest.json";
+    if (!fs::exists(manifest_path)) {
+        GTEST_SKIP() << "Exported PINN runtime assets not found at: " << manifest_path;
+    }
+
+    NNTextTireModel network;
+    network.load_from_manifest(manifest_path.string());
+    const auto lut = network.build_raw_lut({12, 13, 6, 4, 4}, 2);
+    const fs::path lut_path = "test_raw_tire.lut";
+    NNTextTireModel::save_raw_lut(*lut, lut_path.string());
+    NNTextTireModel tabulated = network;
+    ASSERT_NO_THROW(tabulated.load_raw_lut(lut_path.string()));
+
+    // Away from SR=0/SA=0 the postprocess only reads the queried point, so LUT and
+    // network must agree to float rounding at every node there.
+    int checked = 0;
+    for (size_t p = 0; p < lut->data.size() / 4; ++p) {
+        const auto x = lut->node(p);
+        if (x[0] > -0.25 || std::abs(x[1]) < 3.0) {
+            continue;
+        }
+        const TireInput input{x[0], x[1], x[2], x[3], x[4]};
+        const TireForces a = network.predict(input);
+        const TireForces b = tabulated.predict(input);
+        EXPECT_NEAR(b.Fx, a.Fx, 1e-3 * std::max(1.0, std::abs(a.Fx)));
+        EXPECT_NEAR(b.Fy, a.Fy, 1e-3 * std::max(1.0, std::abs(a.Fy)));
+        EXPECT_NEAR(b.Mx, a.Mx, 1e-3 * std::max(1.0, std::abs(a.Mx)));
+        EXPECT_NEAR(b.Mz, a.Mz, 1e-3 * std::max(1.0, std::abs(a.Mz)));
+        ++checked;
+    }
+    EXPECT_GT(checked, 100);
+    fs::remove(lut_path);
+}
+
 // タイヤ熱モデルのテスト
 class TireThermalTest : public ::testing::Test {
 protected:

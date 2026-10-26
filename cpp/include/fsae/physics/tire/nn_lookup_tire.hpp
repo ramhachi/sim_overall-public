@@ -9,6 +9,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
+#include <thread>
 #include <Eigen/Core>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -131,6 +133,71 @@ struct RuntimeHead {
     std::vector<RuntimeLayer> layers;
 };
 
+/// Multilinear 5D table of the raw network output (Fx, Fy, Mx, Mz) over the clamped
+/// input bounds. The runtime postprocess (zero-slip/symmetry gates, friction cap)
+/// stays analytic on top of it, so the sharp gates are not smeared by the grid.
+struct RawForceLut {
+    std::array<int, 5> n = {0, 0, 0, 0, 0};
+    std::array<double, 5> lo = {0.0, 0.0, 0.0, 0.0, 0.0};
+    std::array<double, 5> step = {1.0, 1.0, 1.0, 1.0, 1.0};
+    std::array<size_t, 5> stride = {0, 0, 0, 0, 0};
+    std::vector<float> data;  // row-major [SR][SA][Fz][IA][TSTC][Fx, Fy, Mx, Mz]
+
+    void init(const std::array<int, 5>& counts,
+              const std::array<double, 5>& min,
+              const std::array<double, 5>& max) {
+        n = counts;
+        lo = min;
+        size_t s = 4;
+        for (int d = 4; d >= 0; --d) {
+            if (n[d] < 2) {
+                throw std::runtime_error("RawForceLut: each axis needs at least 2 nodes");
+            }
+            step[d] = (max[d] - min[d]) / (n[d] - 1);
+            stride[d] = s;
+            s *= static_cast<size_t>(n[d]);
+        }
+        data.assign(s, 0.0f);
+    }
+
+    std::array<double, 5> node(size_t point) const {
+        std::array<double, 5> x{};
+        for (int d = 0; d < 5; ++d) {
+            const size_t i = point * 4 / stride[d] % static_cast<size_t>(n[d]);
+            x[d] = lo[d] + step[d] * static_cast<double>(i);
+        }
+        return x;
+    }
+
+    std::array<double, 4> interp(const std::array<double, 5>& x) const {
+        std::array<double, 5> f{};
+        size_t base = 0;
+        for (int d = 0; d < 5; ++d) {
+            const double u = (x[d] - lo[d]) / step[d];
+            const int i = std::clamp(static_cast<int>(u), 0, n[d] - 2);
+            f[d] = std::clamp(u - i, 0.0, 1.0);
+            base += static_cast<size_t>(i) * stride[d];
+        }
+        std::array<double, 4> out = {0.0, 0.0, 0.0, 0.0};
+        for (int corner = 0; corner < 32; ++corner) {
+            double w = 1.0;
+            size_t offset = base;
+            for (int d = 0; d < 5; ++d) {
+                if (corner >> d & 1) {
+                    w *= f[d];
+                    offset += stride[d];
+                } else {
+                    w *= 1.0 - f[d];
+                }
+            }
+            for (int c = 0; c < 4; ++c) {
+                out[c] += w * data[offset + c];
+            }
+        }
+        return out;
+    }
+};
+
 class NNTextTireModel {
 public:
     NNTextTireModel() = default;
@@ -248,6 +315,103 @@ public:
 
     bool is_loaded() const { return loaded_; }
 
+    /// Tabulate the raw network output on a uniform grid over the input bounds.
+    std::shared_ptr<RawForceLut> build_raw_lut(const std::array<int, 5>& counts,
+                                               unsigned threads) const {
+        if (!loaded_ || !has_input_bounds_) {
+            throw std::runtime_error("NNTextTireModel: LUT needs a loaded model with input bounds");
+        }
+        auto lut = std::make_shared<RawForceLut>();
+        lut->init(counts, input_min_, input_max_);
+        const size_t points = lut->data.size() / 4;
+        threads = std::max(1u, threads);
+        std::vector<std::thread> workers;
+        for (unsigned t = 0; t < threads; ++t) {
+            workers.emplace_back([&, t] {
+                NNTextTireModel local = *this;  // predict scratch buffers are per instance
+                local.raw_lut_.reset();
+                for (size_t p = t; p < points; p += threads) {
+                    const auto y = local.forward_physical(lut->node(p), true);
+                    for (int c = 0; c < 4; ++c) {
+                        lut->data[4 * p + c] = static_cast<float>(y[c]);
+                    }
+                }
+            });
+        }
+        for (auto& worker : workers) {
+            worker.join();
+        }
+        return lut;
+    }
+
+    static void save_raw_lut(const RawForceLut& lut, const std::string& path) {
+        std::ofstream file(path, std::ios::binary);
+        if (!file) {
+            throw std::runtime_error("Cannot write tire LUT: " + path);
+        }
+        file.write(kRawLutMagic, sizeof(kRawLutMagic));
+        file.write(reinterpret_cast<const char*>(lut.n.data()), sizeof(lut.n));
+        std::array<double, 5> hi{};
+        for (int d = 0; d < 5; ++d) {
+            hi[d] = lut.lo[d] + lut.step[d] * (lut.n[d] - 1);
+        }
+        file.write(reinterpret_cast<const char*>(lut.lo.data()), sizeof(lut.lo));
+        file.write(reinterpret_cast<const char*>(hi.data()), sizeof(hi));
+        file.write(reinterpret_cast<const char*>(lut.data.data()),
+                   static_cast<std::streamsize>(lut.data.size() * sizeof(float)));
+        if (!file) {
+            throw std::runtime_error("Failed writing tire LUT: " + path);
+        }
+    }
+
+    /// Load a LUT baked from this exact model. Spot-checks grid nodes against the
+    /// network, so a LUT baked from another export fails here instead of silently
+    /// changing the tire.
+    void load_raw_lut(const std::string& path) {
+        std::ifstream file(path, std::ios::binary);
+        if (!file) {
+            throw std::runtime_error("Cannot open tire LUT: " + path);
+        }
+        char magic[sizeof(kRawLutMagic)] = {};
+        std::array<int, 5> counts{};
+        std::array<double, 5> lo{}, hi{};
+        file.read(magic, sizeof(magic));
+        file.read(reinterpret_cast<char*>(counts.data()), sizeof(counts));
+        file.read(reinterpret_cast<char*>(lo.data()), sizeof(lo));
+        file.read(reinterpret_cast<char*>(hi.data()), sizeof(hi));
+        if (!file || std::string(magic, sizeof(magic)) != std::string(kRawLutMagic, sizeof(kRawLutMagic))) {
+            throw std::runtime_error("Invalid tire LUT header: " + path);
+        }
+        for (int d = 0; d < 5; ++d) {
+            const double tol = 1e-9 * std::max(1.0, std::abs(input_max_[d] - input_min_[d]));
+            if (!has_input_bounds_ || std::abs(lo[d] - input_min_[d]) > tol ||
+                std::abs(hi[d] - input_max_[d]) > tol) {
+                throw std::runtime_error("Tire LUT input bounds do not match the PINN model: " + path);
+            }
+        }
+        auto lut = std::make_shared<RawForceLut>();
+        lut->init(counts, lo, hi);
+        file.read(reinterpret_cast<char*>(lut->data.data()),
+                  static_cast<std::streamsize>(lut->data.size() * sizeof(float)));
+        if (!file || file.peek() != std::char_traits<char>::eof()) {
+            throw std::runtime_error("Tire LUT size does not match its header: " + path);
+        }
+
+        const size_t points = lut->data.size() / 4;
+        for (size_t k = 1; k <= 16; ++k) {
+            const size_t p = (k * 2654435761ULL) % points;
+            const auto y = forward_physical(lut->node(p), true);
+            for (int c = 0; c < 4; ++c) {
+                if (std::abs(lut->data[4 * p + c] - y[c]) > 1e-3 * std::max(1.0, std::abs(y[c]))) {
+                    throw std::runtime_error("Tire LUT was baked from a different PINN model: " + path);
+                }
+            }
+        }
+        raw_lut_ = std::move(lut);
+    }
+
+    bool has_raw_lut() const { return raw_lut_ != nullptr; }
+
     bool is_multi_head_runtime() const { return runtime_is_multi_head_; }
 
     void set_runtime_diagnostics_enabled(bool enabled) {
@@ -322,6 +486,9 @@ private:
     double sa_zero_fy_scale_deg_ = 0.0;
     double postprocess_epsilon_ = 1e-9;
     bool loaded_ = false;
+    // ponytail: each process reads its own copy (~100 MB); mmap if worker count x size gets tight.
+    std::shared_ptr<const RawForceLut> raw_lut_;
+    static constexpr char kRawLutMagic[8] = {'T', 'L', 'U', 'T', 'R', 'A', 'W', '2'};
     bool runtime_diagnostics_enabled_ = false;
     mutable NNRuntimeDiagnostics runtime_diagnostics_;
     mutable std::vector<double> runtime_eval_b_;
@@ -491,6 +658,9 @@ private:
         bool include_mx = true) const {
         if (runtime_diagnostics_enabled_) {
             ++runtime_diagnostics_.forward_physical_calls;
+        }
+        if (raw_lut_) {
+            return raw_lut_->interp(physical_input);
         }
         runtime_input_buffer_.resize(physical_input.size());
         for (size_t i = 0; i < 5; ++i) {

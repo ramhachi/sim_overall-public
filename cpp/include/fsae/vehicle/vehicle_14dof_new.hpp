@@ -814,6 +814,10 @@ private:
                 nn_tire_model_.load_from_export(
                     resolve_runtime_asset_path(params_.tire.model_dir));
             }
+            if (!params_.tire.pinn_lut_file.empty()) {
+                nn_tire_model_.load_raw_lut(
+                    resolve_runtime_asset_path(params_.tire.pinn_lut_file));
+            }
             nn_model_loaded_ = true;
             std::cout << "Loaded PINN tire model";
             if (!params_.tire.model_name.empty()) {

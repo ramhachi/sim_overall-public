@@ -310,6 +310,7 @@ struct TireParams {
     bool pinn_use_camber_input = true;     // camber-covered PINN export; Fx stays IA-independent at runtime
     bool pinn_ttc_lateral_sign = true;     // convert TTC Fy/Mz signs to the vehicle/TMeasy convention
     double pinn_eval_rate_hz = 500.0;      // simulation-time ZOH; 0 restores every RK4/K&C evaluation
+    std::string pinn_lut_file;             // bake_tire_lut output; empty = evaluate the network directly
     double ambient_temperature_c = 25.0;   // 外気温 [°C]
     RelaxationParams relaxation;
 };
@@ -825,6 +826,7 @@ struct VehicleParams {
             if (t.contains("pinn_eval_rate_hz")) {
                 p.tire.pinn_eval_rate_hz = t["pinn_eval_rate_hz"];
             }
+            if (t.contains("pinn_lut_file")) p.tire.pinn_lut_file = t["pinn_lut_file"];
             if (t.contains("ambient_temperature_c")) {
                 p.tire.ambient_temperature_c = t["ambient_temperature_c"];
             }
