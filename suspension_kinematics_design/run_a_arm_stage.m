@@ -404,6 +404,13 @@ else
     axleKey = 'rear';
 end
 cost = evaluate_inverse_cost(metrics, targets, axleKey);
+if isfield(metrics, 'polyfit_quality') && isfield(metrics.polyfit_quality, 'rc_roll_max_error_m')
+    fit_tol = metrics.polyfit_quality.tolerances.rc_m;
+    fit_err = metrics.polyfit_quality.rc_roll_max_error_m;
+    if fit_err > fit_tol
+        cost = cost + 2.0 * ((fit_err - fit_tol) / fit_tol)^2;
+    end
+end
 if metrics.IC_y > 0
     cost = cost + 1e5;
 end
