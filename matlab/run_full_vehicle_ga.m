@@ -1,11 +1,16 @@
 function result = run_full_vehicle_ga(config)
 % RUN_FULL_VEHICLE_GA Run the resumable high-fidelity LPV full-vehicle GA.
 
-defaults = vehicle_ga_default_config();
 if nargin < 1 || isempty(config)
-    config = defaults;
+    config = vehicle_ga_default_config();
 else
-    config = merge_nested_structs(defaults, config);
+    % Derive output/binary/tire paths from the caller's project_root, not
+    % from where this file lives (e.g. a worktree running another checkout).
+    root = [];
+    if isfield(config, 'project_root')
+        root = config.project_root;
+    end
+    config = merge_nested_structs(vehicle_ga_default_config(root), config);
 end
 config = validate_config(config);
 config.tire_lut_file = vehicle_tire_lut(config);
