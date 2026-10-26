@@ -47,6 +47,7 @@ function params = apply_full_design(base_params, x, design_context)
     end
 
     params = base_params;
+    base_mass = base_params.mass;
 
     %% 1. Chassis & Geometry
     m_base_target = x(1);
@@ -82,13 +83,25 @@ function params = apply_full_design(base_params, x, design_context)
     params.mass.track_r = track_r;
     
     % 慣性モーメントスケーリング (重量と寸法に依存)
-    % Izz ~ m * (a^2 + w^2) 的なスケーリング
-    scale_mass = params.mass.m_total / 250.0;
-    scale_size = ((wb/1.55)^2 + (mean([track_f, track_r])/1.2)^2) / 2.0;
-    
-    params.mass.Ixx = 32.0 * scale_mass * (mean([track_f, track_r])/1.2)^2;
-    params.mass.Iyy = 95.0 * scale_mass * (wb/1.55)^2;
-    params.mass.Izz = 85.0 * scale_mass * scale_size;
+    % ベース車両の実測/設計慣性を基準に相似スケールする。絶対式で上書きすると
+    % ベース設計ベクトルでもプリセットの慣性に戻らず、LPV ベースラインが変質する。
+    base_track = mean([base_mass.track_f, base_mass.track_r]);
+    if isfield(base_mass, 'Ixx') && isfield(base_mass, 'Iyy') && isfield(base_mass, 'Izz') ...
+            && base_mass.m_total > 0 && base_mass.wheelbase > 0 && base_track > 0
+        scale_mass = params.mass.m_total / base_mass.m_total;
+        scale_wb = wb / base_mass.wheelbase;
+        scale_track = mean([track_f, track_r]) / base_track;
+        params.mass.Ixx = base_mass.Ixx * scale_mass * scale_track^2;
+        params.mass.Iyy = base_mass.Iyy * scale_mass * scale_wb^2;
+        params.mass.Izz = base_mass.Izz * scale_mass * ...
+            (scale_wb^2 + scale_track^2) / 2.0;
+    else
+        scale_mass = params.mass.m_total / 250.0;
+        scale_size = ((wb/1.55)^2 + (mean([track_f, track_r])/1.2)^2) / 2.0;
+        params.mass.Ixx = 32.0 * scale_mass * (mean([track_f, track_r])/1.2)^2;
+        params.mass.Iyy = 95.0 * scale_mass * (wb/1.55)^2;
+        params.mass.Izz = 85.0 * scale_mass * scale_size;
+    end
 
     % バネ下重量は track-width model と同じ一貫した見積もりを使う
     params.mass.m_unsprung = m_unsprung;
@@ -109,7 +122,7 @@ function params = apply_full_design(base_params, x, design_context)
     
     % Alignment (deg -> rad)
     params.suspension.static_camber = [x(13), x(13), x(14), x(14)] * (pi/180.0);
-    params.suspension.static_toe    = [-x(15), x(15), -x(16), x(16)] * (pi/180.0);
+    params.suspension.static_toe    = [-x(15), x(15), x(16), -x(16)] * (pi/180.0);
     
     %% 3. Aero (Trade-off)
     cl_a = x(17);
@@ -259,4 +272,5 @@ function params = apply_full_design(base_params, x, design_context)
         params.drs.enabled = false;
     end
 
+    params = apply_kc_static_alignment(params);
 end

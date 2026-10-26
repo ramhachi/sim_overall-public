@@ -145,7 +145,7 @@ if strcmpi(driver_mode, 'lpv_lqr')
     % VehicleSimRunner exposes PID/RL directly; the LPV driver is selected
     % through the underlying CLI. Later --driver arguments take precedence.
     runner_driver = 'pid';
-    extra_args = '--driver lpv_lqr';
+    extra_args = '--driver lpv_lqr --lpv-model steering6';
 end
 [res, success] = runner.run(params, track_name, track_param, sim_time, ...
     'driver_mode', runner_driver, ...
