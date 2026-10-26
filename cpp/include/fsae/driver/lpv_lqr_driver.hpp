@@ -33,11 +33,16 @@ struct LPVLQRConfig {
     double min_model_speed = 3.0;           // [m/s]
     double max_model_speed = 40.0;          // [m/s]
     double gain_grid_step = 1.0;            // [m/s]
-    double preview_time = 0.32;             // [s]
+    // 0.32 s let the reference run ahead of the car through autocross
+    // slaloms (peak |n| at curvature sign changes); 0.20 s cut that peak.
+    double preview_time = 0.20;             // [s]
     double min_preview_distance = 2.5;      // [m]
     double max_preview_distance = 14.0;     // [m]
     double speed_preview_time = 1.25;       // [s]
     double max_speed_preview_distance = 30.0; // [m]
+    // Speed preview is braking-aware: a slower point ds ahead only caps the
+    // target at sqrt(v^2 + 2*a*ds), instead of forcing its speed immediately.
+    double speed_preview_decel = 4.0;       // [m/s^2]
     double speed_preview_step = 1.0;        // [m]
 
     // State cost: [lateral error, heading error, lateral velocity, yaw-rate error].
@@ -60,13 +65,13 @@ struct LPVLQRConfig {
     double max_steer_rate = 2.8;            // [rad/s], tire angle
     double max_lon_accel = 9.81;            // [m/s^2]
     double max_lon_decel = 1.8 * 9.81;      // [m/s^2]
-    double speed_kp = 0.85;                 // [1/s]
+    double speed_kp = 3.0;                  // [1/s], 0.85 left ~1 m/s mean underspeed
     double speed_ki = 0.12;                 // [1/s^2]
     double speed_integral_limit = 3.0;      // [m/s]
 
     // Lightweight safety filter.  These are conservative operational guards,
     // not a formal CBF guarantee.
-    double lateral_accel_fraction = 0.78;   // fraction of mu_y * g
+    double lateral_accel_fraction = 0.86;   // fraction of mu_y * g (centerline curvature)
     double soft_track_margin = 0.90;        // [m]
     double hard_track_margin = 0.30;        // [m]
     double margin_speed_cap = 7.0;          // [m/s]
@@ -674,7 +679,9 @@ private:
         for (double ds = config_.speed_preview_step;
              ds <= distance + 1e-9;
              ds += std::max(config_.speed_preview_step, 0.25)) {
-            result = std::min(result, lookup_target_speed(wrap_s(s + ds)));
+            const double v = lookup_target_speed(wrap_s(s + ds));
+            result = std::min(
+                result, std::sqrt(v * v + 2.0 * config_.speed_preview_decel * ds));
         }
         return result;
     }

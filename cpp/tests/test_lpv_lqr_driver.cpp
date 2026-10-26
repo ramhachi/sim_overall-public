@@ -225,6 +225,25 @@ TEST(LPVLQRDriver, NonFiniteSteeringMeasurementTriggersFiniteBrakeFallback) {
     EXPECT_EQ(driver.stats().fail_count, 1);
 }
 
+TEST(LPVLQRDriver, SpeedPreviewLeavesBrakingDistanceToSlowPoint) {
+    const auto track = fsae::track::create_acceleration_track(100.0);
+    const std::vector<VelocityPoint> profile = {
+        {0.0, 15.0, 0.0, 0.0, 0.0},
+        {30.0, 15.0, 0.0, 0.0, 0.0},
+        {31.0, 5.0, 0.0, 0.0, 0.0},
+        {track.length(), 5.0, 0.0, 0.0, 0.0},
+    };
+    PreviewLPVLQRDriver driver(track, profile);
+    VehicleState state;
+    state.x = 20.0;
+    state.vx = 10.0;
+    driver.compute_outer_control(state, 0.0);
+    // The 5 m/s point is ~11 m ahead: sqrt(5^2 + 2*4*11) ~ 10.7 m/s, not 5.
+    const double target = driver.last_debug().target_speed;
+    EXPECT_GT(target, 9.5);
+    EXPECT_LT(target, 15.0);
+}
+
 TEST(AnalyticSafetyFilter, ProjectsRateAndRecoversTowardCenter) {
     fsae::driver::AnalyticSafetyConfig config;
     config.max_tire_angle = 0.35;
