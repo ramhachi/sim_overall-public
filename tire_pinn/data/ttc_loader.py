@@ -357,13 +357,21 @@ class TTCDataLoader:
         }
 
     def get_input_bounds(self) -> Dict[str, Dict[str, float]]:
-        return {
+        bounds = {
             column: {
                 "min": float(self.df[column].min()),
                 "max": float(self.df[column].max()),
             }
             for column in INPUT_COLUMNS
         }
+        # SR is only meaningful where Fx is supervised. Cornering runs carry
+        # low-speed SR noise (|SR| up to the 1.5 filter) that would otherwise
+        # let the runtime extrapolate Fx far past the measured slip range.
+        fx_rows = self.component_mask[:, 0] > 0
+        if fx_rows.any():
+            sr = self.df["SR"].to_numpy()[fx_rows]
+            bounds["SR"] = {"min": float(sr.min()), "max": float(sr.max())}
+        return bounds
 
     def get_input_units(self) -> Dict[str, str]:
         return dict(INPUT_UNITS)

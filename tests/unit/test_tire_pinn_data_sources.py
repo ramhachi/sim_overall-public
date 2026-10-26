@@ -557,6 +557,28 @@ def test_fit_normalization_uses_train_rows_only():
     assert loader.output_std[3] == pytest.approx(1.0)
 
 
+def test_input_bounds_limit_sr_to_fx_supervised_rows():
+    loader = object.__new__(TTCDataLoader)
+    loader.df = pd.DataFrame(
+        {
+            "SR": [-0.3, 0.17, 1.5, -1.4],
+            "SA": [0.0, 0.0, 5.0, -5.0],
+            "Fz": [100.0, 200.0, 300.0, 400.0],
+            "IA": [0.0, 0.0, 0.0, 0.0],
+            "TSTC": [20.0, 20.0, 20.0, 20.0],
+        }
+    )
+    # Rows 0-1 are drive/brake (Fx supervised); rows 2-3 are cornering noise.
+    loader.component_mask = np.array(
+        [[1, 0, 1, 1], [1, 0, 1, 1], [0, 1, 1, 1], [0, 1, 1, 1]], dtype=np.float32
+    )
+
+    bounds = loader.get_input_bounds()
+
+    assert bounds["SR"] == {"min": pytest.approx(-0.3), "max": pytest.approx(0.17)}
+    assert bounds["SA"] == {"min": -5.0, "max": 5.0}
+
+
 def test_validate_physics_config_rejects_unconsumed_keys():
     from tire_pinn.main_pinn_train import validate_physics_config
 
