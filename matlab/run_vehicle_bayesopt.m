@@ -29,6 +29,10 @@ end
 config = merge_nested_structs(vehicle_ga_default_config(project_root), ...
     opt_or(opts, 'config', struct()));
 config.tire_lut_file = vehicle_tire_lut(config);
+% Same tire contract as run_full_vehicle_ga: mu_x/mu_y_max (used by the speed
+% planner) come from the deployed PINN export, not the preset defaults.
+base_params = apply_named_tire_model_selection(base_params, 'pinn', ...
+    config.tire_model_name, config.project_root);
 context = struct('config', config, 'base_params', base_params, ...
     'design_context', design_context, 'target_distance', 1006.2611818354848);
 batch_dir = fullfile(out_dir, 'candidates');
