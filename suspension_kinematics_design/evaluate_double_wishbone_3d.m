@@ -662,11 +662,8 @@ dirLow = [pose.L_U(2) - L_C(2), pose.L_U(3) - L_C(3)];
 A = [dirUp(1), -dirLow(1); dirUp(2), -dirLow(2)];
 b = [pose.L_U(2) - pose.U_U(2); pose.L_U(3) - pose.U_U(3)];
 if abs(det(A)) < 1e-9
-    if dirUp(1) >= 0
-        ic = [1e6, pose.W_C(3)];
-    else
-        ic = [-1e6, pose.W_C(3)];
-    end
+    % Parallel arms: IC at infinity along the arms, not horizontal at W_C.
+    ic = [pose.U_U(2), pose.U_U(3)] + 1e6 * dirUp / max(norm(dirUp), 1e-12);
 else
     sol = A \ b;
     ic = [pose.U_U(2) + sol(1) * dirUp(1), pose.U_U(3) + sol(1) * dirUp(2)];
