@@ -451,9 +451,10 @@ class PhysicsValidator:
     ) -> dict:
         """Check combined-slip behavior on measured combined-slip rows.
 
-        When a coverage frame is supplied, only rows with a nearby pure-lateral
-        measurement are evaluated. The gate otherwise extrapolates a pure-slip
-        force that the training data does not contain.
+        When a coverage frame is supplied, only SR-swept rows with a nearby
+        pure-lateral measurement are evaluated. The gate otherwise extrapolates a
+        pure-slip force that the training data does not contain. Too few covered
+        rows returns ``pass=None`` / ``skipped=True`` (not evaluated).
         """
         if self.data_frame is None or self.data_frame.empty:
             return {
@@ -477,14 +478,14 @@ class PhysicsValidator:
             coverage_frame = self.coverage_data_frame
             combined_for_gate = combined
             if "source_test_type" in combined.columns:
-                combined_for_gate = combined[combined["source_test_type"] == "Cr"]
+                # Cr runs never sweep SR: their |SR| is TTC's load-dependent
+                # free-rolling offset (~-0.03 at 1 kN), not applied slip.
+                combined_for_gate = combined[combined["source_test_type"] != "Cr"]
 
             pure = coverage_frame[
                 (coverage_frame["SR"].abs() < 0.01)
                 & (coverage_frame["SA"].abs() > 1.0)
             ]
-            if "source_test_type" in coverage_frame.columns:
-                pure = pure[pure["source_test_type"] == "Cr"]
 
             n_total = int(len(combined_for_gate))
             if n_total == 0 or pure.empty:
@@ -511,13 +512,13 @@ class PhysicsValidator:
             if n_covered < min_coverage_samples:
                 coverage_metrics["coverage_limited"] = True
                 message = (
-                    f"⚠ COVERAGE-LIMITED: only {n_covered}/{n_total} combined-slip rows "
+                    f"⚠ NOT EVALUATED: only {n_covered}/{n_total} combined-slip rows "
                     f"have pure-lateral coverage (< {min_coverage_samples}); gate not evaluated"
                 )
                 print(f"  {message}")
                 return {
-                    "pass": True,
-                    "skipped": False,
+                    "pass": None,
+                    "skipped": True,
                     "metrics": {"violation_rate": float("nan"), **coverage_metrics},
                     "message": message,
                 }
@@ -552,7 +553,7 @@ class PhysicsValidator:
         coverage_suffix = ""
         if coverage_metrics:
             coverage_suffix = (
-                f" on {len(combined)}/{coverage_metrics['n_total']} covered Cr rows "
+                f" on {len(combined)}/{coverage_metrics['n_total']} covered SR-swept rows "
                 f"({coverage_metrics['coverage_fraction']:.1%})"
             )
         if passed:
@@ -1043,6 +1044,6 @@ class PhysicsValidator:
         print("SUMMARY")
         print("=" * 80)
         for test_name, result in results.items():
-            status = "✓ PASS" if result["pass"] else "✗ FAIL"
+            status = {True: "✓ PASS", False: "✗ FAIL", None: "- NOT EVALUATED"}[result["pass"]]
             print(f"{test_name:20s}: {status}")
         print("=" * 80)

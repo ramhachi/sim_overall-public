@@ -102,9 +102,9 @@ def _coverage_frame() -> pd.DataFrame:
 
 def test_measured_combined_slip_filters_uncovered_rows():
     frame = _measured_frame()
-    frame["source_test_type"] = "Cr"
-    frame.loc[len(frame)] = [0.1, 8.0, 2000.0, 0.0, 80.0, "Cr"]
-    frame.loc[len(frame)] = [0.1, 2.0, 1200.0, 0.0, 30.0, "Db"]
+    frame["source_test_type"] = "Db"
+    frame.loc[len(frame)] = [0.1, 8.0, 2000.0, 0.0, 80.0, "Db"]
+    frame.loc[len(frame)] = [0.1, 2.0, 1200.0, 0.0, 30.0, "Cr"]
 
     validator = PhysicsValidator(
         ZeroForceModel(), data_frame=frame, coverage_data_frame=_coverage_frame()
@@ -117,12 +117,12 @@ def test_measured_combined_slip_filters_uncovered_rows():
     assert result["metrics"]["n_samples"] == 3
     assert result["metrics"]["coverage_fraction"] == 0.75
     assert result["metrics"]["coverage_limited"]
-    assert "covered Cr rows" in result["message"]
+    assert "covered SR-swept rows" in result["message"]
 
 
-def test_measured_combined_slip_min_coverage_is_coverage_limited():
+def test_measured_combined_slip_min_coverage_is_not_evaluated():
     frame = _measured_frame()
-    frame["source_test_type"] = "Cr"
+    frame["source_test_type"] = "Db"
 
     validator = PhysicsValidator(
         ZeroForceModel(), data_frame=frame, coverage_data_frame=_coverage_frame()
@@ -130,16 +130,38 @@ def test_measured_combined_slip_min_coverage_is_coverage_limited():
     result = validator.test_measured_combined_slip(
         max_violation_rate=0.0, min_coverage_samples=4
     )
-    assert result["pass"]
-    assert not result["skipped"]
+    assert result["pass"] is None
+    assert result["skipped"]
     assert result["metrics"]["n_samples"] == 3
     assert result["metrics"]["coverage_limited"]
     assert "gate not evaluated" in result["message"]
 
 
+def test_measured_combined_slip_ignores_cr_free_rolling_sr_offset():
+    # Road-speed Cr rows carry a load-dependent SR offset (~-0.03 at 1 kN) and no
+    # applied slip, so they are not combined-slip rows even when |SR| > 0.02.
+    frame = pd.DataFrame(
+        {
+            "SR": [-0.03, -0.04, -0.05],
+            "SA": [2.0, -2.0, 4.0],
+            "Fz": [1200.0, 900.0, 1100.0],
+            "IA": [0.0, 0.0, 0.0],
+            "TSTC": [30.0, 35.0, 40.0],
+            "source_test_type": ["Cr", "Cr", "Cr"],
+        }
+    )
+    validator = PhysicsValidator(
+        CombinedBoostModel(), data_frame=frame, coverage_data_frame=_coverage_frame()
+    )
+    result = validator.test_measured_combined_slip(min_coverage_samples=1)
+    assert result["pass"] is None
+    assert result["skipped"]
+    assert result["metrics"]["n_total"] == 0
+
+
 def test_measured_combined_slip_still_fails_on_covered_rows():
     frame = _measured_frame()
-    frame["source_test_type"] = "Cr"
+    frame["source_test_type"] = "Db"
 
     validator = PhysicsValidator(
         CombinedBoostModel(), data_frame=frame, coverage_data_frame=_coverage_frame()
@@ -150,3 +172,30 @@ def test_measured_combined_slip_still_fails_on_covered_rows():
     assert not result["pass"]
     assert result["metrics"]["n_samples"] == 3
     assert result["metrics"]["violation_rate"] > 0.0
+
+
+def test_unevaluated_combined_slip_gate_blocks_deployment_without_failing_physics():
+    ok = {"pass": True, "metrics": {}, "message": "ok"}
+    physics = {
+        "measured_friction_circle": ok,
+        "measured_combined_slip": {
+            "pass": None,
+            "skipped": True,
+            "metrics": {"n_samples": 0},
+            "message": "not evaluated",
+        },
+    }
+    summary = summarize_validation_results(
+        tire_name="test",
+        dataset_info={"has_db": True, "has_cr": True},
+        r2_dict={"r2_fx": 0.95, "r2_fy": 0.95, "r2_mx": 0.95, "r2_mz": 0.95},
+        physics_results=physics,
+        r2_target=0.90,
+        mz_r2_target=0.80,
+    )
+    assert not summary["deployable"]
+    assert summary["physics"]["measured_combined_slip"]["pass"] is None
+    assert summary["physics"]["measured_combined_slip"]["skipped"]
+    assert summary["deployment_reasons"] == [
+        "Measured holdout gates were not evaluated: measured_combined_slip."
+    ]

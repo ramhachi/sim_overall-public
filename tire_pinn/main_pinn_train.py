@@ -181,12 +181,18 @@ def summarize_validation_results(
     r2_min = min(r2_dict["r2_fx"], r2_dict["r2_fy"])
     mz_r2 = r2_dict["r2_mz"]
     dataset_complete = bool(dataset_info["has_db"] and dataset_info["has_cr"])
-    physics_passed = all(result["pass"] for result in physics_results.values())
-    measured_gate_names = {"measured_friction_circle", "measured_combined_slip"}
-    measured_gates_present = all(
-        name in physics_results and not physics_results[name].get("skipped", False)
-        for name in measured_gate_names
+    # Skipped checks are "not evaluated", not failed; the measured gates below
+    # still block deployment when they were skipped.
+    physics_passed = all(
+        result["pass"] for result in physics_results.values() if not result.get("skipped", False)
     )
+    measured_gate_names = ("measured_friction_circle", "measured_combined_slip")
+    missing_measured_gates = [
+        name
+        for name in measured_gate_names
+        if name not in physics_results or physics_results[name].get("skipped", False)
+    ]
+    measured_gates_present = not missing_measured_gates
 
     deployment_reasons = []
     if not dataset_complete:
@@ -203,7 +209,7 @@ def summarize_validation_results(
         deployment_reasons.append("One or more physics validation checks failed.")
     if not measured_gates_present:
         deployment_reasons.append(
-            "Measured friction-circle and combined-slip holdout gates were not evaluated."
+            f"Measured holdout gates were not evaluated: {', '.join(missing_measured_gates)}."
         )
 
     deployable = (
@@ -226,6 +232,7 @@ def summarize_validation_results(
         "physics": {
             name: {
                 "pass": result["pass"],
+                "skipped": result.get("skipped", False),
                 "metrics": result["metrics"],
                 "message": result["message"],
             }
@@ -660,7 +667,7 @@ def main() -> int:
 
     def candidate_sort_key(candidate: Dict[str, Any]) -> tuple[bool, float, float]:
         summary = candidate["validation_summary"]
-        physics_passed = all(result["pass"] for result in summary["physics"].values())
+        physics_passed = all(result["pass"] is not False for result in summary["physics"].values())
         return (
             physics_passed,
             summary["r2_min"],
