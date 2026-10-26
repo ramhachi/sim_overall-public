@@ -16,6 +16,16 @@ from ..data.ttc_loader import INPUT_UNITS, OUTPUT_UNITS
 from ..models.pinn_model import NormalizedTirePINN
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    return value
+
+
 class CPPExporter:
     """
     Export a PINN model and its metadata to a C++ runtime directory.
@@ -70,11 +80,15 @@ class CPPExporter:
         self._export_weights(weights_path)
         self._export_normalization(norm_path)
         self._export_runtime_model(runtime_path, input_bounds=input_bounds)
-        manifest = self._build_manifest(
-            tire_name=tire_name,
-            dataset_info=dataset_info,
-            validation_summary=validation_summary,
-            training_summary=training_summary,
+        # NaN/inf metrics (e.g. a gate with zero covered samples) are not valid
+        # JSON; nlohmann::json in the C++ runtime refuses to load them.
+        manifest = _json_safe(
+            self._build_manifest(
+                tire_name=tire_name,
+                dataset_info=dataset_info,
+                validation_summary=validation_summary,
+                training_summary=training_summary,
+            )
         )
         version_manifest_rel = manifest["runtime_files"]["version_manifest"]
         version_manifest_path = self.output_dir / version_manifest_rel

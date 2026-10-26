@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from tire_pinn.export.cpp_exporter import CPPExporter
+from tire_pinn.export.cpp_exporter import CPPExporter, _json_safe
 from tire_pinn.models.pinn_model import (
     NormalizedTirePINN,
     PhysicsEnforcedTireModel,
@@ -533,3 +533,11 @@ def test_camber_validator_marks_one_sided_measured_camber_as_coverage_limited():
     assert result["metrics"]["coverage_limited"] is True
     assert result["metrics"]["has_positive_ia"] is True
     assert result["metrics"]["has_negative_ia"] is False
+
+
+def test_manifest_metrics_are_strict_json():
+    manifest = {"validation": {"metrics": {"violation_rate": float("nan"), "rates": [1.0, float("inf")]}}}
+
+    text = json.dumps(_json_safe(manifest), allow_nan=False)
+
+    assert json.loads(text) == {"validation": {"metrics": {"violation_rate": None, "rates": [1.0, None]}}}
