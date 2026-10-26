@@ -20,7 +20,6 @@ track_name = opt_or(opts, 'track_name', 'autocross');
 track_param = opt_or(opts, 'track_param', 0.0);
 sim_time = opt_or(opts, 'sim_time', 180.0);
 initial_speed = opt_or(opts, 'initial_speed', 6.0);
-driver_mode = opt_or(opts, 'driver_mode', 'pid');
 timeout_sec = opt_or(opts, 'timeout_sec', 300);
 freeze_below_pct = opt_or(opts, 'freeze_below_pct', 0.03);
 
@@ -52,16 +51,28 @@ if ~exist(out_dir, 'dir')
     mkdir(out_dir);
 end
 
-runner = VehicleSimRunner(project_root);
-baseline = evaluate_design(runner, base_params, design_context, base_x, ...
-    track_name, track_param, sim_time, initial_speed, driver_mode, timeout_sec);
+% Same evaluator as the GA (LPV only, per-vehicle GGV cap), so screening and
+% optimisation rank designs with one objective.
+config = merge_nested_structs(vehicle_ga_default_config(project_root), struct( ...
+    'track_name', track_name, 'track_radius', track_param, ...
+    'simulation_time_sec', sim_time, 'initial_speed_mps', initial_speed, ...
+    'candidate_timeout_sec', timeout_sec));
+config = merge_nested_structs(config, opt_or(opts, 'config', struct()));
+context = struct('config', config, 'base_params', base_params, ...
+    'design_context', design_context, 'target_distance', 1006.2611818354848);
+batch_dir = fullfile(out_dir, 'candidates');
+if ~exist(batch_dir, 'dir')
+    mkdir(batch_dir);
+end
+
+baseline = evaluate_design(context, base_x, 'baseline', batch_dir);
 if ~baseline.feasible
     error('run_design_sensitivity:baselineNotFeasible', ...
         'Baseline did not complete %s: %s (%s)', ...
         track_name, baseline.failure_code, baseline.failure_message);
 end
 
-rows = {make_row('baseline', 0.0, 0.0, 'baseline', baseline)};
+points = struct('variable', {}, 'base_value', {}, 'value', {}, 'direction', {}, 'x', {});
 for i = 1:numel(names)
     name = names{i};
     idx = find(strcmp(schema.variable_names, name), 1, 'first');
@@ -77,10 +88,19 @@ for i = 1:numel(names)
         end
         x = base_x;
         x(idx) = values(k);
-        sample = evaluate_design(runner, base_params, design_context, x, ...
-            track_name, track_param, sim_time, initial_speed, driver_mode, timeout_sec);
-        rows{end + 1, 1} = make_row(name, base_value, values(k), directions{k}, sample); %#ok<AGROW>
+        points(end + 1) = struct('variable', name, 'base_value', base_value, ... %#ok<AGROW>
+            'value', values(k), 'direction', directions{k}, 'x', x);
     end
+end
+point_samples = cell(numel(points), 1);
+parfor i = 1:numel(points)
+    point_samples{i} = evaluate_design(context, points(i).x, ...
+        sprintf('%s_%s', points(i).variable, points(i).direction), batch_dir);
+end
+rows = {make_row('baseline', 0.0, 0.0, 'baseline', baseline)};
+for i = 1:numel(points)
+    rows{end + 1, 1} = make_row(points(i).variable, points(i).base_value, ... %#ok<AGROW>
+        points(i).value, points(i).direction, point_samples{i});
 end
 
 samples = struct2table(vertcat(rows{:}));
@@ -106,7 +126,8 @@ manifest.track_name = track_name;
 manifest.track_param = track_param;
 manifest.sim_time = sim_time;
 manifest.initial_speed = initial_speed;
-manifest.driver_mode = driver_mode;
+manifest.driver_mode = config.driver_mode;
+manifest.use_lpv_ggv = config.use_lpv_ggv;
 manifest.step_fraction = step_fraction;
 manifest.min_step_fraction_of_range = min_step_fraction;
 manifest.freeze_below_pct = freeze_below_pct;
@@ -136,30 +157,21 @@ fprintf('baseline lap: %.3f s, %d/%d feasible samples\n', ...
 fprintf('samples: %s\nsummary: %s\nfreeze candidates: %s\n', samples_path, summary_path, freeze_path);
 end
 
-function sample = evaluate_design(runner, base_params, design_context, x, ...
-    track_name, track_param, sim_time, initial_speed, driver_mode, timeout_sec)
-params = apply_full_design(base_params, x, design_context);
-runner_driver = driver_mode;
-extra_args = '';
-if strcmpi(driver_mode, 'lpv_lqr')
-    % VehicleSimRunner exposes PID/RL directly; the LPV driver is selected
-    % through the underlying CLI. Later --driver arguments take precedence.
-    runner_driver = 'pid';
-    extra_args = '--driver lpv_lqr --lpv-model steering6';
-end
-[res, success] = runner.run(params, track_name, track_param, sim_time, ...
-    'driver_mode', runner_driver, ...
-    'initial_speed', initial_speed, ...
-    'timeout_sec', timeout_sec, ...
-    'extra_cli_args', extra_args);
+function sample = evaluate_design(context, x, candidate_id, batch_dir)
+record = evaluate_vehicle_ga_candidate(x, context, candidate_id, batch_dir);
+res = record.result;
 sample = struct();
-sample.success = logical(success);
+sample.success = record.return_code == 0;
 sample.lap_completed = false;
 sample.lap_time = NaN;
 sample.max_lateral_error = NaN;
 sample.max_track_limit_excess = NaN;
 sample.failure_code = '';
 sample.failure_message = '';
+if isfield(record, 'error_message')
+    sample.failure_code = 'evaluation_exception';
+    sample.failure_message = record.error_message;
+end
 if isstruct(res) && ~isempty(res)
     if isfield(res, 'lap_completed'), sample.lap_completed = logical(res.lap_completed); end
     if isfield(res, 'lap_time'), sample.lap_time = double(res.lap_time); end
