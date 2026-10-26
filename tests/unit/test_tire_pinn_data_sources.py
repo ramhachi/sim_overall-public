@@ -687,9 +687,10 @@ def test_mirror_negative_ia_flips_sa_ia_fy_mz_and_keeps_fx():
 
     mirrored_x, mirrored_y, mirrored_mask = loader._mirror_negative_ia(x, y, mask)
 
-    assert mirrored_x.shape == (6, 5)
-    assert mirrored_y.shape == (6, 4)
-    assert mirrored_mask.shape == (6, 4)
+    # Every row is off the (SA, IA) = 0 plane, so all four get a mirror image.
+    assert mirrored_x.shape == (8, 5)
+    assert mirrored_y.shape == (8, 4)
+    assert mirrored_mask.shape == (8, 4)
     assert mirrored_x[4, 1] == pytest.approx(-2.0)
     assert mirrored_x[4, 3] == pytest.approx(-4.0)
     assert mirrored_y[4, 0] == pytest.approx(10.0)
@@ -699,3 +700,8 @@ def test_mirror_negative_ia_flips_sa_ia_fy_mz_and_keeps_fx():
     assert mirrored_x[5, 1] == pytest.approx(2.0)
     assert mirrored_x[5, 3] == pytest.approx(-4.0)
     assert mirrored_y[5, 1] == pytest.approx(100.0)
+    # Drive/brake-style row (IA = 0): combined-slip Fx gets the +SA side too.
+    assert mirrored_x[6, 1] == pytest.approx(-2.0)
+    assert mirrored_x[6, 3] == pytest.approx(0.0)
+    assert mirrored_y[6, 0] == pytest.approx(30.0)
+    assert mirrored_y[6, 1] == pytest.approx(-50.0)

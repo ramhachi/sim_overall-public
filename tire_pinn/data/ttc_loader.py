@@ -55,9 +55,10 @@ class TTCDataLoader:
         mirror_negative_ia: bool = False,
     ):
         self.normalize = normalize
-        # TTC cornering data only covers positive camber. Mirroring the train
-        # split teaches the model the physically expected IA symmetry without
-        # leaking synthetic rows into validation/test.
+        # TTC covers only one side of the (SA, IA) mirror plane in places
+        # (positive camber, SA <= 0 drive/brake). Mirroring the train split
+        # teaches the physical left/right symmetry without leaking synthetic
+        # rows into validation/test.
         self.mirror_negative_ia = mirror_negative_ia
         # Keep only samples at one inflation pressure (TTC P column, kPa) so the
         # pressure sweep is not pooled into one 5-input model (#18). None = no filter.
@@ -381,12 +382,15 @@ class TTCDataLoader:
         y_train: np.ndarray,
         train_mask: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Mirror cambered cornering rows across IA=0 for train only.
+        """Add the left/right mirror image of every train row.
 
-        The TTC cornering sweep only contains positive camber. A physical mirror
-        is (SA, IA) -> (-SA, -IA), with Fy/Mx/Mz negated and Fx unchanged.
+        A physical mirror is (SA, IA) -> (-SA, -IA), with Fy/Mx/Mz negated and
+        Fx unchanged. TTC cornering only covers positive camber, and drive/brake
+        runs only sweep SA <= 0, so without the mirror combined-slip Fx at
+        positive SA is extrapolated (mu 1.36 vs 2.08 at SR 0.12, |SA| 10 deg).
+        Rows already on the mirror plane (SA = IA = 0) are skipped.
         """
-        mirror_mask = (train_mask[:, 1] > 0.0) & (x_train[:, 3] > 0.0)
+        mirror_mask = (x_train[:, 1] != 0.0) | (x_train[:, 3] != 0.0)
         if not mirror_mask.any():
             return x_train, y_train, train_mask
 
@@ -400,7 +404,7 @@ class TTCDataLoader:
         mirrored_y[:, 3] *= -1.0
 
         print(
-            f"  Mirrored negative-IA train rows: {int(mirror_mask.sum())} "
+            f"  Mirrored (SA, IA) train rows: {int(mirror_mask.sum())} "
             f"(train {len(x_train)} -> {len(x_train) + len(mirrored_x)})"
         )
         return (
