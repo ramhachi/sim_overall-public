@@ -10,19 +10,24 @@ end
 config = validate_config(config);
 config.tire_lut_file = vehicle_tire_lut(config);
 
+if exist('build_design_vector_from_params', 'file') ~= 2
+    addpath(fullfile(config.project_root, 'matlab', 'design_sensitivity'));
+end
 schema = build_full_vehicle_design_schema();
 active_schema = vehicle_ga_active_schema(schema);
 
 base_params = create_vehicle_baseline_template();
 torque_preset_path = fullfile(config.project_root, 'matlab', ...
     'parameter_presets', 'params_flexible_torque.json');
-base_params = merge_nested_structs(base_params, jsondecode(fileread(torque_preset_path)));
+% The preset is a vehicle artifact: its vehicle lives under .params (K&C included).
+base_params = merge_nested_structs(base_params, load_vehicle_artifact(torque_preset_path).params);
 [base_params, selected_tire] = apply_named_tire_model_selection( ...
     base_params, 'pinn', config.tire_model_name, config.project_root);
 base_params.tire.model_dir = fullfile('output', 'tire_models', config.tire_model_name);
 base_params.tire.model_manifest = fullfile(base_params.tire.model_dir, 'manifest.json');
-active_schema.full_center = apply_fixed_reference_values( ...
-    active_schema.full_center, schema, base_params);
+% Fixed variables stay at the baseline vehicle, not at the middle of their
+% bounds (Mass would otherwise be 300 kg instead of 282 kg).
+active_schema.full_center = build_design_vector_from_params(base_params);
 compatibility = make_compatibility(config, schema, active_schema);
 
 [run_dir, resume_data] = resolve_run_directory(config, compatibility);
@@ -241,21 +246,6 @@ compatibility = struct( ...
     'use_lpv_ggv', config.use_lpv_ggv, ...
     'use_tire_lut', config.use_tire_lut, ...
     'objective_version', 'lpv_vehicle_ga_gate/v4');
-end
-
-function vector = apply_fixed_reference_values(vector, schema, base_params)
-vector = set_named(vector, schema, 'TireFzNom', base_params.tire.Fz_nom);
-vector = set_named(vector, schema, 'TireRelaxationLx', base_params.tire.relaxation.Lx_base);
-vector = set_named(vector, schema, 'TireRelaxationLy', base_params.tire.relaxation.Ly_base);
-vector = set_named(vector, schema, 'TireCx', base_params.tire.Cx);
-vector = set_named(vector, schema, 'TireCy', base_params.tire.Cy);
-vector = set_named(vector, schema, 'TireVerticalK', base_params.tire.k_tire);
-vector = set_named(vector, schema, 'TireVerticalC', base_params.tire.c_tire);
-end
-
-function vector = set_named(vector, schema, name, value)
-index = find(strcmp(schema.variable_names, name), 1);
-vector(index) = value;
 end
 
 function [run_dir, resume_data] = resolve_run_directory(config, compatibility)
