@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -79,6 +80,11 @@ struct LPVLQRConfig {
     // Curvature cap is braking-aware: a corner ds ahead allows
     // sqrt(v_corner^2 + 2*a*ds). Above ~4 m/s^2 the speed P-loop overshoots.
     double curvature_cap_decel = 3.0;       // [m/s^2]
+    // When set, the cap's lateral limit is this fraction of the vehicle's own
+    // 14DOF ay_max(v) (ggv_generator) instead of lateral_accel_fraction*mu_y*g,
+    // so CG height, track, aero and tire changes reach the lap time.
+    std::shared_ptr<const laptime::GGVMap> ggv;
+    double ggv_lateral_fraction = 1.0;      // [-]
     double soft_track_margin = 0.90;        // [m]
     double hard_track_margin = 0.30;        // [m]
     double margin_speed_cap = 7.0;          // [m/s]
@@ -250,7 +256,8 @@ public:
             pending_prediction_valid_ = true;
         }
 
-        vehicle::DriverInput input = longitudinal_control(target_speed, speed);
+        vehicle::DriverInput input = longitudinal_control(
+            target_speed, speed, std::abs(state.r * state.vx));
         input.steering = vehicle_params_.steering.torque_mode ? 0.0 : target_driver_steering;
         input.gear = select_gear_from_vehicle_params(speed, vehicle_params_);
 
@@ -643,16 +650,27 @@ private:
         return std::atan2(2.0 * wheelbase * std::sin(alpha), std::max(lookahead, 0.5));
     }
 
-    vehicle::DriverInput longitudinal_control(double target_speed, double speed) {
+    /// Lateral limit [m/s^2] at speed: the vehicle's ay_max(v) when a GGV is set.
+    double lateral_limit(double speed) const {
+        if (config_.ggv) return config_.ggv_lateral_fraction * config_.ggv->ay_limit(speed);
+        return std::max(
+            1.0, config_.lateral_accel_fraction * vehicle_params_.tire.mu_y_max * 9.81);
+    }
+
+    vehicle::DriverInput longitudinal_control(
+        double target_speed, double speed, double lateral_accel) {
         const double error = target_speed - speed;
         speed_integral_ = std::clamp(
             speed_integral_ + error * config_.control_dt,
             -config_.speed_integral_limit,
             config_.speed_integral_limit);
+        // Friction ellipse on drive: full throttle at the lateral limit spun
+        // the car on corner exits (power oversteer, |heading error| ~45 deg).
+        const double lateral_ratio = std::min(lateral_accel / lateral_limit(speed), 1.0);
         last_ax_command_ = std::clamp(
             config_.speed_kp * error + config_.speed_ki * speed_integral_,
             -config_.max_lon_decel,
-            config_.max_lon_accel);
+            config_.max_lon_accel * std::sqrt(1.0 - lateral_ratio * lateral_ratio));
         vehicle::DriverInput input;
         if (last_ax_command_ >= 0.0) {
             input.throttle = std::clamp(
@@ -694,17 +712,23 @@ private:
         return result;
     }
 
+    double corner_speed(double curvature) const {
+        if (config_.ggv) {
+            return config_.ggv->corner_speed(
+                curvature, config_.ggv_lateral_fraction, config_.max_model_speed);
+        }
+        return std::sqrt(lateral_limit(0.0) / curvature);
+    }
+
     double curvature_speed_cap(double s, double speed) const {
-        const double lateral_accel = std::max(
-            1.0,
-            config_.lateral_accel_fraction * vehicle_params_.tire.mu_y_max * 9.81);
         double cap = std::numeric_limits<double>::infinity();
         const double distance = std::clamp(speed * 0.9, 4.0, 22.0);
         for (double ds = 0.0; ds <= distance + 1e-9; ds += 1.0) {
             const double curvature = std::abs(track_.get_curvature(wrap_s(s + ds)));
             if (curvature < 1e-5) continue;
+            const double v_corner = corner_speed(curvature);
             cap = std::min(cap, std::sqrt(
-                lateral_accel / curvature + 2.0 * config_.curvature_cap_decel * ds));
+                v_corner * v_corner + 2.0 * config_.curvature_cap_decel * ds));
         }
         return cap;
     }

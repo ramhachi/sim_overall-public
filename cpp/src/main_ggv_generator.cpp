@@ -9,6 +9,9 @@
 /// the plant itself; nothing here re-implements vehicle physics.
 ///
 /// Usage: ggv_generator [--params vehicle.json] [--out ggv.json] [--tire pinn|tmeasy] [--quick]
+///                      [--lateral-only]
+/// --lateral-only skips step 2 and writes zero ax tables: enough for the LPV cap
+/// (laptime_sim --lpv-ggv), rejected by the planner (--ggv).
 ///
 /// The tire model is PINN by default. This target is compiled with
 /// FSAE_TEST_TIRE_MODEL_TYPE so that, when the PINN artifact is missing, it falls back to the
@@ -157,16 +160,17 @@ double longitudinal_peak(Rig& rig, double v, double delta, bool accel) {
 
 int main(int argc, char** argv) {
     std::string params_file, out_file = "output/ggv/ggv.json", tire = "pinn";
-    bool quick = false;
+    bool quick = false, lateral_only = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--params" && i + 1 < argc) params_file = argv[++i];
         else if (a == "--out" && i + 1 < argc) out_file = argv[++i];
         else if (a == "--tire" && i + 1 < argc) tire = argv[++i];
         else if (a == "--quick") quick = true;
+        else if (a == "--lateral-only") lateral_only = true;
         else {
             std::cerr << "usage: ggv_generator [--params f.json] [--out ggv.json] "
-                         "[--tire pinn|tmeasy] [--quick]" << std::endl;
+                         "[--tire pinn|tmeasy] [--quick] [--lateral-only]" << std::endl;
             return 2;
         }
     }
@@ -193,6 +197,7 @@ int main(int argc, char** argv) {
         source += "tmeasy (fallback: PINN artifact missing)";
     }
     if (!params_file.empty()) source += ", params=" + params_file;
+    if (lateral_only) source += ", lateral-only";
 
     laptime::GGVMap g;
     g.source = source;
@@ -256,7 +261,7 @@ int main(int argc, char** argv) {
         const auto& rr = ramps[i];
         std::vector<double> acc_row, brk_row;
         for (double rk : g.r) {
-            if (rk >= 1.0 - 1e-9) {  // at the steady limit there is no longitudinal reserve
+            if (lateral_only || rk >= 1.0 - 1e-9) {  // at the steady limit there is no longitudinal reserve
                 acc_row.push_back(0.0);
                 brk_row.push_back(0.0);
                 continue;

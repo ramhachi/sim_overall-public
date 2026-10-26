@@ -201,6 +201,7 @@ struct SimulationConfig {
 
     // オフライン GGV（Issue #23, --ggv）。空なら閉形式プランナー。--max-lon-* は GGV 時は上限のみ
     std::string ggv_file;
+    std::string lpv_ggv_file;  // GGV for the LPV curvature cap only (may be --lateral-only)
     bool max_lon_explicit = false;
 
     // 風ベクトル（地図座標 [m/s]、Issue #28, --wind wx,wy）。プラントへの受け渡しは WIRING.md
@@ -1215,6 +1216,12 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
             fail_result(result, "ggv_load_failed", error.what(), 0.0);
             return result;
         }
+        if (!(perf.ggv->ax_accel(perf.ggv->v.front(), 0.0) > 0.0)) {
+            fail_result(result, "ggv_load_failed",
+                        config.ggv_file + " has no longitudinal table (--lateral-only?); "
+                        "pass it with --lpv-ggv instead", 0.0);
+            return result;
+        }
         perf.lon_limits_are_caps = config.max_lon_explicit;
         std::cerr << "[planner] GGV path: " << config.ggv_file << " (" << perf.ggv->source
                   << "), friction_margin=" << perf.friction_margin
@@ -1345,6 +1352,16 @@ LapResult run_laptime_simulation(const SimulationConfig& requested_config) {
         lqr_config.max_model_speed = config.max_speed;
         lqr_config.control_dt = 0.025;
         lqr_config.use_actuator_augmented_lqr = (config.lpv_model == "steering6");
+        lqr_config.ggv = perf.ggv;
+        if (!config.lpv_ggv_file.empty()) {
+            try {
+                lqr_config.ggv = std::make_shared<const laptime::GGVMap>(
+                    laptime::GGVMap::load(config.lpv_ggv_file));
+            } catch (const std::exception& error) {
+                fail_result(result, "ggv_load_failed", error.what(), 0.0);
+                return result;
+            }
+        }
         lqr_config.actuator_q[0] *= config.lpv_lateral_weight_scale;
         lqr_config.actuator_q[1] *= config.lpv_heading_weight_scale;
         if (config.steer_inner_omega > 0.0) {
@@ -3208,6 +3225,7 @@ int main(int argc, char** argv) {
         else if (arg == "--max-lon-accel" && i + 1 < argc) { config.max_lon_accel = std::stod(argv[++i]); config.max_lon_explicit = true; }
         else if (arg == "--max-lon-decel" && i + 1 < argc) { config.max_lon_decel = std::stod(argv[++i]); config.max_lon_explicit = true; }
         else if (arg == "--ggv" && i + 1 < argc) config.ggv_file = argv[++i];
+        else if (arg == "--lpv-ggv" && i + 1 < argc) config.lpv_ggv_file = argv[++i];
         else if (arg == "--wind" && i + 1 < argc) {
             const std::string w = argv[++i];
             const auto comma = w.find(',');

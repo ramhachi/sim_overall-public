@@ -244,6 +244,28 @@ TEST(LPVLQRDriver, SpeedPreviewLeavesBrakingDistanceToSlowPoint) {
     EXPECT_LT(target, 15.0);
 }
 
+TEST(LPVLQRDriver, CurvatureCapFollowsVehicleGgvLateralLimit) {
+    const auto track = fsae::track::create_circle_track(20.0, 6.0);
+    auto ggv = std::make_shared<fsae::laptime::GGVMap>();
+    ggv->v = {0.0, 40.0};
+    ggv->ay_max = {10.0, 10.0};
+    ggv->r = {0.0, 1.0};
+    ggv->ax_max = {{5.0, 0.0}, {5.0, 0.0}};
+    ggv->ax_min = {{10.0, 0.0}, {10.0, 0.0}};
+    fsae::driver::LPVLQRConfig config;
+    config.ggv = ggv;
+    PreviewLPVLQRDriver driver(track, constant_profile(track.length(), 30.0), config);
+    const auto start = track.get_point(10.0);
+    VehicleState state;
+    state.x = start.x;
+    state.y = start.y;
+    state.psi = start.theta;
+    state.vx = 12.0;
+    driver.compute_outer_control(state, 0.0);
+    // Constant curvature 1/20: the cap is the GGV corner speed sqrt(10 * 20).
+    EXPECT_NEAR(driver.last_debug().steering_speed_cap, std::sqrt(200.0), 0.05);
+}
+
 TEST(AnalyticSafetyFilter, ProjectsRateAndRecoversTowardCenter) {
     fsae::driver::AnalyticSafetyConfig config;
     config.max_tire_angle = 0.35;
