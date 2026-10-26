@@ -14,10 +14,11 @@ if ~isfield(kc, 'corners') || ~isstruct(kc.corners)
     return;
 end
 
-% KC corner sign convention: front-right camber is the Y-mirror of front-left
-% (the C++ runtime expects +camber on FR for negative physical camber), while
-% rear camber keeps the same sign on both sides.
-camber_sign = [1, -1, 1, 1];
+% KC corner sign convention: corners store physical camber with the same sign
+% on both sides (a right corner is the exact Y-mirror of the left one); the
+% C++ runtime mirrors IA for the left wheels. FR used to carry a flipped
+% static camber from geom_from_hardpoints; compute_vehicle_kc rebuilds it.
+camber_sign = [1, 1, 1, 1];
 axles = { ...
     'front', {'FL', 'FR'}, 1; ...
     'rear',  {'RL', 'RR'}, 3};

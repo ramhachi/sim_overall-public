@@ -17,8 +17,11 @@ geom.R_tire = R_tire;
 geom.R_loaded = R_loaded;
 geom.is_left = logical(is_left);
 geom.is_front = logical(is_front);
+% Static camber is physical (same sign both sides). A right corner is the
+% Y-mirror of a left one, which reverses the rotation about X; applying the
+% left rotation to a right spindle gave right corners positive static camber.
 c = cos(static_camber);
-s = sin(static_camber);
+s = sin(static_camber) * (1 - 2 * ~is_left);
 R_camb = [1, 0, 0; 0, c, s; 0, -s, c];
 spindle_local = is_left * [0; -1; 0] + (~is_left) * [0; 1; 0];
 geom.Spindle_Dir = R_camb * spindle_local;
