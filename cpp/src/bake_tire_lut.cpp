@@ -14,7 +14,8 @@ int main(int argc, char** argv) {
         std::cerr << "Usage: bake_tire_lut <manifest.json> <out.lut> [nSR nSA nFz nIA nTSTC]\n";
         return 2;
     }
-    std::array<int, 5> counts = {95, 101, 18, 10, 13};
+    // Fz dominates the error (Fy/Fz moves fast at low load); SR/SA beyond ~50 buy little.
+    std::array<int, 5> counts = {48, 51, 35, 10, 13};
     if (argc == 8) {
         for (int d = 0; d < 5; ++d) {
             counts[d] = std::stoi(argv[3 + d]);

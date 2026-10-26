@@ -16,6 +16,9 @@ params = compute_vehicle_kc(params);
 params.drs.enabled = false;
 params.tire.model_dir = fullfile('output', 'tire_models', context.config.tire_model_name);
 params.tire.model_manifest = fullfile(params.tire.model_dir, 'manifest.json');
+if ~isempty(context.config.tire_lut_file)
+    params.tire.pinn_lut_file = context.config.tire_lut_file;
+end
 
 write_json_atomic(params_path, params);
 

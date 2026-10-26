@@ -28,6 +28,7 @@ end
 
 config = merge_nested_structs(vehicle_ga_default_config(project_root), ...
     opt_or(opts, 'config', struct()));
+config.tire_lut_file = vehicle_tire_lut(config);
 context = struct('config', config, 'base_params', base_params, ...
     'design_context', design_context, 'target_distance', 1006.2611818354848);
 batch_dir = fullfile(out_dir, 'candidates');
