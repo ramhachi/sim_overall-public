@@ -307,7 +307,7 @@ struct TireParams {
     std::string model_dir = "output/tire_models/Hoosier_18p0X6p0-10_R20_Rim6"; // モデルディレクトリ（PINN）
     std::string model_manifest = "output/tire_models/Hoosier_18p0X6p0-10_R20_Rim6/manifest.json"; // manifest.json パス（PINN）
     std::string model_name = "Hoosier_18p0X6p0-10_R20_Rim6"; // EasyStart 表示用
-    bool pinn_use_camber_input = false;    // true only for PINN exports with measured camber coverage
+    bool pinn_use_camber_input = true;     // camber-covered PINN export; Fx stays IA-independent at runtime
     bool pinn_ttc_lateral_sign = true;     // convert TTC Fy/Mz signs to the vehicle/TMeasy convention
     double pinn_eval_rate_hz = 500.0;      // simulation-time ZOH; 0 restores every RK4/K&C evaluation
     double ambient_temperature_c = 25.0;   // 外気温 [°C]

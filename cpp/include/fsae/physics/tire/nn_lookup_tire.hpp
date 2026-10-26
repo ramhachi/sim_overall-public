@@ -44,9 +44,11 @@ struct NNRuntimeDiagnostics {
     uint64_t forward_physical_calls = 0;
     uint64_t postprocess_calls = 0;
     uint64_t zero_reference_forwards = 0;
+    uint64_t fx_zero_reference_forwards = 0;
     uint64_t symmetry_forwards = 0;
     uint64_t sa_zero_forwards = 0;
     uint64_t zero_slip_projections = 0;
+    uint64_t fx_zero_projections = 0;
     uint64_t symmetry_projections = 0;
     uint64_t sa_zero_projections = 0;
     uint64_t friction_cap_projections = 0;
@@ -591,6 +593,51 @@ private:
             zero_reference_output = forward_physical(zero_reference_input, include_mx);
         }
 
+        double fx_zero_gate = 0.0;
+        if (use_zero_slip && zero_slip_sr_scale_ > 0.0) {
+            const double sr_normalized = physical_input[0] / zero_slip_sr_scale_;
+            fx_zero_gate = std::exp(-sr_normalized * sr_normalized);
+        }
+
+        std::array<double, 4> fx_reference_output = {0.0, 0.0, 0.0, 0.0};
+        std::array<double, 4> fx_reference_mirror_output = {0.0, 0.0, 0.0, 0.0};
+        if (fx_zero_gate > kPostprocessGateCutoff) {
+            const bool at_zero_sa_ia =
+                std::abs(physical_input[1]) <= 1e-9 && std::abs(physical_input[3]) <= 1e-9;
+            if (needs_zero_reference && at_zero_sa_ia) {
+                fx_reference_output = zero_reference_output;
+            } else {
+                if (runtime_diagnostics_enabled_) {
+                    ++runtime_diagnostics_.fx_zero_reference_forwards;
+                }
+                std::array<double, 5> fx_reference_input = physical_input;
+                fx_reference_input[0] = 0.0;
+                if (has_input_bounds_) {
+                    fx_reference_input[0] =
+                        std::clamp(fx_reference_input[0], input_min_[0], input_max_[0]);
+                }
+                fx_reference_output = forward_physical(fx_reference_input, include_mx);
+            }
+
+            if (needs_symmetry && std::abs(physical_input[1]) > 1e-9) {
+                if (runtime_diagnostics_enabled_) {
+                    ++runtime_diagnostics_.fx_zero_reference_forwards;
+                }
+                std::array<double, 5> fx_mirror_input = physical_input;
+                fx_mirror_input[0] = 0.0;
+                fx_mirror_input[1] = -fx_mirror_input[1];
+                if (has_input_bounds_) {
+                    fx_mirror_input[0] =
+                        std::clamp(fx_mirror_input[0], input_min_[0], input_max_[0]);
+                    fx_mirror_input[1] =
+                        std::clamp(fx_mirror_input[1], input_min_[1], input_max_[1]);
+                }
+                fx_reference_mirror_output = forward_physical(fx_mirror_input, include_mx);
+            } else {
+                fx_reference_mirror_output = fx_reference_output;
+            }
+        }
+
         auto apply_zero_slip_projection = [&](double gate, std::array<double, 4>& values) {
             if (!needs_zero_reference || gate <= kPostprocessGateCutoff) {
                 return;
@@ -598,12 +645,23 @@ private:
             if (runtime_diagnostics_enabled_) {
                 ++runtime_diagnostics_.zero_slip_projections;
             }
-            values[0] -= gate * zero_reference_output[0];
             values[1] -= gate * zero_reference_output[1];
             values[3] -= gate * zero_reference_output[3];
         };
 
+        auto apply_fx_zero_projection = [&](double gate, const std::array<double, 4>& reference,
+                                            std::array<double, 4>& values) {
+            if (!use_zero_slip || gate <= kPostprocessGateCutoff) {
+                return;
+            }
+            if (runtime_diagnostics_enabled_) {
+                ++runtime_diagnostics_.fx_zero_projections;
+            }
+            values[0] -= gate * reference[0];
+        };
+
         apply_zero_slip_projection(physical_zero_gate, output);
+        apply_fx_zero_projection(fx_zero_gate, fx_reference_output, output);
 
         if (needs_symmetry) {
             if (runtime_diagnostics_enabled_) {
@@ -618,6 +676,7 @@ private:
 
             std::array<double, 4> mirror_output = forward_physical(mirror_input, include_mx);
             apply_zero_slip_projection(physical_zero_gate, mirror_output);
+            apply_fx_zero_projection(fx_zero_gate, fx_reference_mirror_output, mirror_output);
 
             const double projected_fx = 0.5 * (output[0] + mirror_output[0]);
             const double projected_fy = 0.5 * (output[1] - mirror_output[1]);

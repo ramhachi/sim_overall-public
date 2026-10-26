@@ -481,7 +481,7 @@ TEST(RealNNModel, DefaultPinnVehicleUsesSafeRuntimeConventions) {
     })");
 
     EXPECT_EQ(params.tire.model_type, "pinn");
-    EXPECT_FALSE(params.tire.pinn_use_camber_input);
+    EXPECT_TRUE(params.tire.pinn_use_camber_input);
     EXPECT_TRUE(params.tire.pinn_ttc_lateral_sign);
     EXPECT_DOUBLE_EQ(params.tire.pinn_eval_rate_hz, 500.0);
     EXPECT_DOUBLE_EQ(parsed_params.tire.pinn_eval_rate_hz, 1000.0);
@@ -513,9 +513,10 @@ TEST(RealNNModel, MultirateZohControlsPredictionCount) {
         return vehicle.nn_tire_runtime_diagnostics().prediction_calls;
     };
 
-    EXPECT_EQ(count_predictions(1000.0), 4004u);
-    EXPECT_EQ(count_predictions(500.0), 2004u);
-    EXPECT_EQ(count_predictions(20.0), 84u);
+    // Camber-aware runtime evaluates Fx with IA=0 as a second forward.
+    EXPECT_EQ(count_predictions(1000.0), 8008u);
+    EXPECT_EQ(count_predictions(500.0), 4008u);
+    EXPECT_EQ(count_predictions(20.0), 168u);
 
     auto reset_params = fsae::vehicle::VehicleParams::default_fsae();
     reset_params.tire.pinn_eval_rate_hz = 20.0;
@@ -523,17 +524,17 @@ TEST(RealNNModel, MultirateZohControlsPredictionCount) {
     reset_vehicle.set_nn_tire_runtime_diagnostics_enabled(true);
     reset_vehicle.reset_nn_tire_runtime_diagnostics();
     reset_vehicle.reset();
-    EXPECT_EQ(reset_vehicle.nn_tire_runtime_diagnostics().prediction_calls, 4u);
+    EXPECT_EQ(reset_vehicle.nn_tire_runtime_diagnostics().prediction_calls, 8u);
 
     reset_vehicle.reset_nn_tire_runtime_diagnostics();
     reset_vehicle.set_initial_velocity(5.0);
     reset_vehicle.step(0.001, {});
-    EXPECT_EQ(reset_vehicle.nn_tire_runtime_diagnostics().prediction_calls, 4u);
+    EXPECT_EQ(reset_vehicle.nn_tire_runtime_diagnostics().prediction_calls, 8u);
 
     reset_vehicle.reset_nn_tire_runtime_diagnostics();
     reset_vehicle.state().vx += 1.0;
     reset_vehicle.step(0.001, {});
-    EXPECT_EQ(reset_vehicle.nn_tire_runtime_diagnostics().prediction_calls, 4u);
+    EXPECT_EQ(reset_vehicle.nn_tire_runtime_diagnostics().prediction_calls, 8u);
 }
 
 TEST(RealNNModel, RequestedPinnVehicleFailsWhenRuntimeUnspecified) {

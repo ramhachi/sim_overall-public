@@ -700,8 +700,22 @@ private:
         int wheel_index,
         const physics::tire::TireInput& input) const {
         const double eval_rate_hz = params_.tire.pinn_eval_rate_hz;
+        const bool override_fx_camber =
+            params_.tire.pinn_use_camber_input && std::abs(input.IA) > 1e-9;
+        auto evaluate = [&]() {
+            physics::tire::TireForces forces =
+                to_vehicle_convention(nn_tire_model_.predict(input, true));
+            if (override_fx_camber) {
+                auto no_camber_input = input;
+                no_camber_input.IA = 0.0;
+                forces.Fx = to_vehicle_convention(
+                    nn_tire_model_.predict(no_camber_input, true)).Fx;
+            }
+            return forces;
+        };
+
         if (eval_rate_hz <= 0.0) {
-            return to_vehicle_convention(nn_tire_model_.predict(input, true));
+            return evaluate();
         }
 
         const double interval = 1.0 / eval_rate_hz;
@@ -712,7 +726,7 @@ private:
             !pinn_force_cache_valid_[wheel_index] ||
             sample_time > pinn_force_cache_time_[wheel_index] + time_tolerance;
         if (sample_due) {
-            pinn_force_cache_[wheel_index] = to_vehicle_convention(nn_tire_model_.predict(input, true));
+            pinn_force_cache_[wheel_index] = evaluate();
             pinn_force_cache_time_[wheel_index] = sample_time;
             pinn_force_cache_valid_[wheel_index] = true;
         }
@@ -1586,11 +1600,12 @@ private:
                     const double SR_inst = slip.kappa;
                     const double SA_inst = slip.alpha_rad * 180.0 / M_PI;
 
-                    // Current deployable TTC PINNs have no measured camber coverage.
-                    // Feeding static negative camber into those models creates a
-                    // nonphysical zero-slip lateral-force bias, so camber is opt-in.
+                    // Camber-aware PINN path. The left/right IA mirroring
+                    // follows the TTC sign convention; Fx is evaluated at IA=0
+                    // in evaluate_pinn_tire_force.
+                    const bool is_left_wheel = (i == FL || i == RL);
                     double IA = params_.tire.pinn_use_camber_input
-                        ? camber * 180.0 / M_PI
+                        ? (is_left_wheel ? -camber : camber) * 180.0 / M_PI
                         : 0.0;
 
                     // タイヤ表面温度（TSTC）[°C]
