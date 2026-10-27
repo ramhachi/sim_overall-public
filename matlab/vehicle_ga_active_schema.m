@@ -1,5 +1,13 @@
-function active = vehicle_ga_active_schema(schema)
+function active = vehicle_ga_active_schema(schema, suspension_design)
 % VEHICLE_GA_ACTIVE_SCHEMA Select physically tunable variables for fixed-PINN GA.
+%
+% suspension_design: 'kc' (default) searches the representative K&C deltas
+% (KC_*, 10 variables) and keeps the hardpoints at the reference; the concrete
+% hardpoints are synthesised afterwards by the suspension inverse stages.
+% 'hardpoints' searches the raw HP_* offsets (14 variables) instead.
+if nargin < 2 || isempty(suspension_design)
+    suspension_design = 'kc';
+end
 
 fixed_variable_names = { ...
     'TireFzNom', 'TireRelaxationLx', 'TireRelaxationLy', ...
@@ -10,6 +18,17 @@ fixed_variable_names = { ...
     'Mass', 'EngineTorqueScale', ...  % lighter / more torque is always faster
     'SteeringStiffness', ...           % unused by the model: OAT lap identical at +-58 %
     'POU_Jack_C1_F', 'POU_Jack_C2_F'}; % K&C owns jacking; any offset only slows the car
+switch suspension_design
+    case 'kc'
+        unused_prefix = 'HP_';
+    case 'hardpoints'
+        unused_prefix = 'KC_';
+    otherwise
+        error('vehicle_ga_active_schema:unknownSuspensionDesign', ...
+            'suspension_design must be ''kc'' or ''hardpoints''.');
+end
+fixed_variable_names = [fixed_variable_names, ...
+    schema.variable_names(startsWith(schema.variable_names, unused_prefix))];
 active_mask = ~ismember(schema.variable_names, fixed_variable_names);
 
 active = struct( ...
