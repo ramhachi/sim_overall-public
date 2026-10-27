@@ -87,8 +87,8 @@ for i = 1:numel(schema.extra_tunable_specs)
         case 'ChassisTwistInertia'
             value = params.suspension.I_twist;
         otherwise
-            if startsWith(spec.name, 'HP_')
-                value = nested_or(params, spec.path, 0.0);  % offsets default to the reference
+            if startsWith(spec.name, {'HP_', 'KC_'})
+                value = nested_or(params, spec.path, 0.0);  % offsets/deltas default to the linkage
                 x(spec.index) = value;
                 continue;
             end

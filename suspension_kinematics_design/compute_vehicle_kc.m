@@ -12,7 +12,9 @@ function params = compute_vehicle_kc(params)
 % metres, up/outboard positive, Y-mirrored on the right) move the arm pickups,
 % ball joints and tie rod. Only the change since the last call is applied
 % (kc.applied_hardpoint_offsets), so calling this twice is harmless.
-% Static camber/toe come from the profile.
+% Static camber/toe come from the profile. Finally suspension.kc_deltas
+% (representative K&C design variables) shift the solved curves; see
+% apply_kc_deltas.
 
 script = 'suspension_kinematics_design/compute_vehicle_kc.m';
 kc = params.suspension.kc;
@@ -132,7 +134,66 @@ kc.steer_map = struct( ...
     'bump_steer', 'removed (rack=0 column); add kinematics.toe_vs_travel separately', ...
     'rack_ratio_m_per_rad', params.steering.rack_ratio, ...
     'source', script);
+kc = apply_kc_deltas(kc, params);
 params.suspension.kc = kc;
+end
+
+function kc = apply_kc_deltas(kc, params)
+% Representative K&C values (suspension.kc_deltas.<front|rear>.*) shift the
+% solved linkage's curves. Only first-order couplings that hold exactly on the
+% sampled linkages are carried along: RC height drives jacking and track change
+% through RC/(t/2) (r = 1.000 over 600 random hardpoint sets); camber gain, bump
+% steer and anti are independent slope/offset changes. All deltas are relative
+% to the solved linkage, so 0 leaves it untouched and re-runs do not stack.
+names = {'FL', 'FR', 'RL', 'RR'};
+axles = {'front', 'front', 'rear', 'rear'};
+tracks = [params.mass.track_f, params.mass.track_f, params.mass.track_r, params.mass.track_r];
+deltas = struct('front', axle_offsets(params.suspension, 'front', 'kc_deltas'), ...
+    'rear', axle_offsets(params.suspension, 'rear', 'kc_deltas'));
+for i = 1:4
+    d = deltas.(axles{i});
+    rc = field0(d, 'rc_height');
+    cg = field0(d, 'camber_gain');
+    bs = field0(d, 'bump_steer');
+    ab = field0(d, 'anti_brake');
+    ad = field0(d, 'anti_drive');
+    side = 1 - 2 * (mod(i, 2) == 0);      % +1 left, -1 right (toe, jacking)
+    ht = 0.5 * tracks(i);
+    c = kc.corners.(names{i});
+    s = c.sample_values;
+    t = s.travel_m;
+    s.rc_height_m = s.rc_height_m + rc;
+    s.track_change_m = s.track_change_m + rc / ht * t;
+    s.jacking_force_per_fy = s.jacking_force_per_fy + side * rc / ht;
+    s.camber_rad = s.camber_rad + cg * t;
+    if isfield(s, 'toe_rad')
+        s.toe_rad = s.toe_rad + side * bs * t;
+    end
+    s.anti_brake = s.anti_brake + ab;
+    s.anti_drive = s.anti_drive + ad;
+    c.sample_values = s;
+    k = c.kinematics;
+    k.camber_vs_travel(2) = k.camber_vs_travel(2) + cg;
+    if isfield(k, 'toe_vs_travel')
+        k.toe_vs_travel(2) = k.toe_vs_travel(2) + side * bs;
+    end
+    k.jacking_force_per_fy = k.jacking_force_per_fy + side * rc / ht;
+    k.anti_brake_vs_travel(1) = k.anti_brake_vs_travel(1) + ab;
+    k.anti_drive_vs_travel(1) = k.anti_drive_vs_travel(1) + ad;
+    c.kinematics = k;
+    kc.corners.(names{i}) = c;
+end
+for a = {'front', 'rear'}
+    d = deltas.(a{1});
+    x = kc.(a{1});
+    x.roll_center_height = x.roll_center_height + field0(d, 'rc_height');
+    x.anti_brake_pct = x.anti_brake_pct + field0(d, 'anti_brake');
+    x.anti_drive_pct = x.anti_drive_pct + field0(d, 'anti_drive');
+    x.anti_brake_vs_travel(1) = x.anti_brake_vs_travel(1) + field0(d, 'anti_brake');
+    x.anti_drive_vs_travel(1) = x.anti_drive_vs_travel(1) + field0(d, 'anti_drive');
+    kc.(a{1}) = x;
+end
+kc.applied_kc_deltas = deltas;
 end
 
 function offsets = axle_offsets(s, axle, field)

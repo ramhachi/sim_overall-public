@@ -42,6 +42,24 @@ for a = 1:2
             [hardpoints{h, 4}, ' offset (', axles{a, 2}, ')'], 'm');
     end
 end
+
+% Representative K&C values, as deltas on the solved linkage's curves
+% (compute_vehicle_kc/apply_kc_deltas). Bounds are the 2.5-97.5 % spread seen
+% on 600 random hardpoint sets, i.e. what real linkages reached.
+kc = { ...
+    'RCHeight', 'rc_height', [-0.20, 0.17], [-0.20, 0.25], 'Roll centre height', 'm'; ...
+    'CamberGain', 'camber_gain', [-0.90, 1.10], [-1.90, 1.00], 'Camber gain', 'rad/m'; ...
+    'BumpSteer', 'bump_steer', [-1.35, 1.05], [-0.70, 1.40], 'Bump steer (left-corner toe slope)', 'rad/m'; ...
+    'AntiBrake', 'anti_brake', [-0.45, 1.30], [-4.50, 0.55], 'Anti under braking', '-'; ...
+    'AntiDrive', 'anti_drive', [-0.26, 0.24], [-0.11, 1.80], 'Anti under drive', '-'};
+for a = 1:2
+    for h = 1:size(kc, 1)
+        bounds = kc{h, 2 + a};
+        specs(end + 1) = make_spec(['KC_', kc{h, 1}, '_', axles{a, 1}], ... %#ok<AGROW>
+            bounds(1), bounds(2), 'field', {'suspension', 'kc_deltas', axles{a, 2}, kc{h, 2}}, ...
+            [kc{h, 5}, ' delta (', axles{a, 2}, ')'], kc{h, 6});
+    end
+end
 end
 
 function spec = make_spec(name, lower, upper, apply_mode, path, description, unit)

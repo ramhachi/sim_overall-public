@@ -53,6 +53,33 @@ classdef test_compute_vehicle_kc < matlab.unittest.TestCase
             tc.verifyGreaterThan(q.suspension.kc.front.roll_center_height, ...
                 p.suspension.kc.front.roll_center_height + 0.05);
         end
+
+        function kcDeltasShiftCurvesConsistently(tc)
+            p = production_profile();
+            base = compute_vehicle_kc(p);
+            p.suspension.kc_deltas.front = struct('rc_height', 0.05, 'camber_gain', -0.3, ...
+                'bump_steer', 0.2, 'anti_drive', 0.1);
+            q = compute_vehicle_kc(p);
+            q2 = compute_vehicle_kc(q);
+            ht = 0.5 * p.mass.track_f;
+            a = base.suspension.kc.corners;
+            b = q.suspension.kc.corners;
+            t = b.FL.sample_values.travel_m(:);
+            tc.verifyEqual(q.suspension.kc.front.roll_center_height, ...
+                base.suspension.kc.front.roll_center_height + 0.05, 'AbsTol', 1e-12);
+            tc.verifyEqual(b.FR.sample_values.jacking_force_per_fy(:), ...
+                a.FR.sample_values.jacking_force_per_fy(:) - 0.05 / ht, 'AbsTol', 1e-12);
+            tc.verifyEqual(b.FL.sample_values.track_change_m(:), ...
+                a.FL.sample_values.track_change_m(:) + 0.05 / ht * t, 'AbsTol', 1e-12);
+            tc.verifyEqual(b.FR.sample_values.camber_rad(:), ...
+                a.FR.sample_values.camber_rad(:) - 0.3 * t, 'AbsTol', 1e-12);
+            % Toe is stored left-positive: bump steer flips sign on the right.
+            tc.verifyEqual(b.FR.sample_values.toe_rad(:), ...
+                a.FR.sample_values.toe_rad(:) - 0.2 * t, 'AbsTol', 1e-12);
+            tc.verifyEqual(b.RL.sample_values.camber_rad(:), a.RL.sample_values.camber_rad(:), 'AbsTol', 1e-15);
+            tc.verifyEqual(q2.suspension.kc.corners.FL.sample_values.camber_rad(:), ...
+                b.FL.sample_values.camber_rad(:), 'AbsTol', 1e-15);
+        end
     end
 end
 
