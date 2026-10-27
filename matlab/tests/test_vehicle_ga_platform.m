@@ -30,6 +30,10 @@ classdef test_vehicle_ga_platform < matlab.unittest.TestCase
 
             testCase.verifyNumElements(active.indices, 39);  % 29 + 10 K&C deltas
             testCase.verifyNumElements(vehicle_ga_active_schema(schema, 'hardpoints').indices, 43);
+            frozen = vehicle_ga_active_schema(schema, 'kc', vehicle_ga_low_sensitivity_variables());
+            testCase.verifyNumElements(frozen.indices, 28);
+            testCase.verifyError(@() vehicle_ga_active_schema(schema, 'kc', {'NotAVariable'}), ...
+                'vehicle_ga_active_schema:unknownVariable');
             testCase.verifyTrue(ismember('DamperF', active.variable_names));
             testCase.verifyFalse(ismember('DamperR', active.variable_names));
             % K&C LUTs own camber; camber-gain variables would be inert.

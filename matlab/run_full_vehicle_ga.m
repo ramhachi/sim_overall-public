@@ -19,7 +19,7 @@ if exist('build_design_vector_from_params', 'file') ~= 2
     addpath(fullfile(config.project_root, 'matlab', 'design_sensitivity'));
 end
 schema = build_full_vehicle_design_schema();
-active_schema = vehicle_ga_active_schema(schema, config.suspension_design);
+active_schema = vehicle_ga_active_schema(schema, config.suspension_design, config.freeze_variables);
 
 base_params = create_vehicle_baseline_template();
 torque_preset_path = fullfile(config.project_root, 'matlab', ...
@@ -33,6 +33,13 @@ base_params.tire.model_manifest = fullfile(base_params.tire.model_dir, 'manifest
 % Fixed variables stay at the baseline vehicle, not at the middle of their
 % bounds (Mass would otherwise be 300 kg instead of 282 kg).
 active_schema.full_center = build_design_vector_from_params(base_params);
+if ~isempty(config.fixed_reference_path)
+    % Fixed variables take the reference artifact's values (e.g. a previous
+    % best) by name; names it lacks keep the baseline.
+    reference = jsondecode(fileread(config.fixed_reference_path));
+    [present, index] = ismember(cellstr(string(reference.variable_names)), schema.variable_names);
+    active_schema.full_center(index(present)) = reference.design_vector(present);
+end
 compatibility = make_compatibility(config, schema, active_schema);
 
 [run_dir, resume_data] = resolve_run_directory(config, compatibility);
@@ -250,6 +257,7 @@ compatibility = struct( ...
     'torque_contract', [true, 0.02, 4.5, 0.3, 0.3, 25.0], ...
     'use_lpv_ggv', config.use_lpv_ggv, ...
     'suspension_design', config.suspension_design, ...
+    'freeze_variables', {cellstr(config.freeze_variables)}, ...
     'use_tire_lut', config.use_tire_lut, ...
     'objective_version', 'lpv_vehicle_ga_gate/v4');
 end
