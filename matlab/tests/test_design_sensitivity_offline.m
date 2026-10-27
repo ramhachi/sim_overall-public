@@ -15,6 +15,12 @@ classdef test_design_sensitivity_offline < matlab.unittest.TestCase
             tc.verifyEqual(rebuilt.suspension.k_spring(1), params.suspension.k_spring(1), 'RelTol', 1e-12);
             tc.verifyEqual(rebuilt.suspension.K_chassis, params.suspension.K_chassis, 'RelTol', 1e-12);
             tc.verifyEqual(rebuilt.aero.CL_A, params.aero.CL_A, 'RelTol', 1e-12);
+
+            % Toe-out must survive the round trip with its sign.
+            toe = ismember(schema.variable_names, {'ToeF', 'ToeR'});
+            x(toe) = [-1.5, -0.4];
+            back = build_design_vector_from_params(apply_full_design(params, x, context));
+            tc.verifyEqual(back(toe), [-1.5, -0.4], 'AbsTol', 1e-12);
         end
 
         function testUnknownVariableAbortsBeforeSweep(tc)

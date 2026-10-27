@@ -34,8 +34,9 @@ x(ix('ARBF')) = params.suspension.k_arb_f;
 x(ix('ARBR')) = params.suspension.k_arb_r;
 x(ix('CamberF')) = rad2deg(mean_pair(params.suspension.static_camber, 1, 2));
 x(ix('CamberR')) = rad2deg(mean_pair(params.suspension.static_camber, 3, 4));
-x(ix('ToeF')) = rad2deg(mean_abs_pair(params.suspension.static_toe, 1, 2));
-x(ix('ToeR')) = rad2deg(mean_abs_pair(params.suspension.static_toe, 3, 4));
+% Inverse of apply_full_design: static_toe = [-ToeF, ToeF, ToeR, -ToeR] (toe-out stays negative).
+x(ix('ToeF')) = rad2deg(mean([-params.suspension.static_toe(1), params.suspension.static_toe(2)]));
+x(ix('ToeR')) = rad2deg(mean([params.suspension.static_toe(3), -params.suspension.static_toe(4)]));
 x(ix('AeroCLA')) = params.aero.CL_A;
 x(ix('LSDPreload')) = params.powertrain.lsd_preload;
 x(ix('LSDRampAcc')) = params.powertrain.lsd_ramp_accel;
@@ -124,6 +125,3 @@ function value = mean_pair(values, a, b)
 value = mean([values(a), values(b)]);
 end
 
-function value = mean_abs_pair(values, a, b)
-value = mean(abs([values(a), values(b)]));
-end
